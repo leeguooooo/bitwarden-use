@@ -1,0 +1,84 @@
+name: release
+
+# Tag-driven binary releases (GitHub Releases — no npm, no crates.io).
+# Push a tag like `v1.15.0` and CI cross-builds native binaries on each
+# platform, tars them with a .sha256, and attaches them to the Release.
+# Consumers install with:  curl -fsSL https://raw.githubusercontent.com/leeguooooo/bitvault-use/main/install.sh | sh
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "tag to build (e.g. v1.15.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14        # Apple Silicon
+            target: aarch64-apple-darwin
+          - os: macos-13        # Intel
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm # free arm64 runner for public repos
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: install rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add ${{ matrix.target }}
+
+      - name: cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: build
+        run: cargo build --release --locked --target ${{ matrix.target }} --bins
+
+      - name: package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          name="bitvault-use-${{ matrix.target }}"
+          staging="$name"
+          mkdir -p "$staging"
+          cp "target/${{ matrix.target }}/release/bitvault-use" "$staging/"
+          cp "target/${{ matrix.target }}/release/bitvault-use-agent" "$staging/"
+          cp LICENSE README.md "$staging/" 2>/dev/null || true
+          tar czf "$name.tar.gz" "$staging"
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          else
+            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          fi
+          echo "asset=$name.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            ${{ steps.package.outputs.asset }}
+            ${{ steps.package.outputs.asset }}.sha256
