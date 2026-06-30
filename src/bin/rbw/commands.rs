@@ -1448,12 +1448,12 @@ pub fn fido2_list() -> anyhow::Result<()> {
         for cred in fido2_credentials {
             let rp_id = decrypt_fido2_field(cred.rp_id.as_deref(), entry);
             let credential_id =
-                cred.credential_id.as_deref().unwrap_or("").to_string();
+                decrypt_fido2_field(cred.credential_id.as_deref(), entry);
             println!(
                 "{}\t{}\t{}",
                 name,
                 rp_id.as_deref().unwrap_or(""),
-                credential_id,
+                credential_id.as_deref().unwrap_or(""),
             );
         }
     }
@@ -1580,19 +1580,20 @@ fn display_fido2_credential(
     cred: &rbw::db::Fido2Credential,
     entry: &rbw::db::Entry,
 ) -> anyhow::Result<()> {
+    // every fido2 field is an EncString in the vault — decrypt them all
+    let credential_id = decrypt_fido2_field(cred.credential_id.as_deref(), entry);
     let rp_id = decrypt_fido2_field(cred.rp_id.as_deref(), entry);
     let user_handle = decrypt_fido2_field(cred.user_handle.as_deref(), entry);
+    let key_type = decrypt_fido2_field(cred.key_type.as_deref(), entry);
+    let key_curve = decrypt_fido2_field(cred.key_curve.as_deref(), entry);
     let key_value = decrypt_fido2_field(cred.key_value.as_deref(), entry);
 
     println!("name: {name}");
-    println!(
-        "credentialId: {}",
-        cred.credential_id.as_deref().unwrap_or("")
-    );
+    println!("credentialId: {}", credential_id.as_deref().unwrap_or(""));
     println!("rpId: {}", rp_id.as_deref().unwrap_or(""));
     println!("userHandle: {}", user_handle.as_deref().unwrap_or(""));
-    println!("keyType: {}", cred.key_type.as_deref().unwrap_or(""));
-    println!("keyCurve: {}", cred.key_curve.as_deref().unwrap_or(""));
+    println!("keyType: {}", key_type.as_deref().unwrap_or(""));
+    println!("keyCurve: {}", key_curve.as_deref().unwrap_or(""));
 
     if let Some(key_value) = &key_value {
         println!("privateKey (base64url): {key_value}");
