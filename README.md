@@ -1,10 +1,16 @@
 # bitvault-use
 
+<p align="center">
+  <img src="assets/hero.png" width="760"
+       alt="bitvault-use pulls a passkey out of your Bitwarden vault so the command line can sign logins headlessly — no browser, no fingerprint tap">
+</p>
+
 `bitvault-use` is a command line client for
 [Bitwarden](https://bitwarden.com/) and self-hosted
 [Vaultwarden](https://github.com/dani-garcia/vaultwarden) servers, with
 first-class support for extracting **FIDO2 / passkey** credentials from your
-vault.
+vault — so you can sign WebAuthn logins **headlessly**, with no browser and no
+fingerprint tap.
 
 Unlike the official stateless CLI — which requires you to manually lock and
 unlock and pass temporary keys around in environment variables —
@@ -15,14 +21,26 @@ unlocking as needed.
 
 ## Installation
 
-With a working Rust toolchain:
+**Prebuilt binary (recommended)** — no Rust toolchain, no npm, no token:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/leeguooooo/bitvault-use/main/install.sh | sh
+```
+
+This pulls `bitvault-use` + `bitvault-use-agent` from the latest
+[GitHub Release](https://github.com/leeguooooo/bitvault-use/releases) (macOS
+arm64/x64, Linux arm64/x64), verifies the checksum, and installs into
+`~/.local/bin`. Override with `BITVAULT_INSTALL_DIR=/usr/local/bin`, or pin a
+version with `BITVAULT_VERSION=v0.1.0`.
+
+**From source** — any platform with a Rust toolchain:
 
 ```sh
 cargo install --locked --path .
 ```
 
-This builds two binaries, `bitvault-use` and `bitvault-use-agent`, and
-requires the
+Both paths produce the two binaries `bitvault-use` and `bitvault-use-agent` and
+require the
 [`pinentry`](https://www.gnupg.org/related_software/pinentry/index.en.html)
 program (to display password prompts).
 

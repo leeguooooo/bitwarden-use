@@ -1,6 +1,6 @@
 [package]
 name = "bitvault-use"
-version = "1.15.0"
+version = "0.1.0"
 authors = ["Jesse Luehrs <doy@tozt.net>"]
 edition = "2021"
 rust-version = "1.82.0"
