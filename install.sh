@@ -54,8 +54,10 @@ tar xzf "$tmp/$asset" -C "$tmp"
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$tmp/$BIN-$target/$BIN" "$INSTALL_DIR/$BIN"
 install -m 0755 "$tmp/$BIN-$target/$AGENT" "$INSTALL_DIR/$AGENT"
+# short alias `bwu` -> bitwarden-use (typing the full name gets old)
+ln -sf "$BIN" "$INSTALL_DIR/bwu"
 
-printf 'install: installed %s + %s to %s\n' "$BIN" "$AGENT" "$INSTALL_DIR" >&2
+printf 'install: installed %s + %s (+ alias bwu) to %s\n' "$BIN" "$AGENT" "$INSTALL_DIR" >&2
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *) printf 'install: add %s to your PATH\n' "$INSTALL_DIR" >&2 ;;

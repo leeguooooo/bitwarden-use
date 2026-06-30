@@ -42,7 +42,8 @@ cargo install --locked --path .
 Both paths produce the two binaries `bitwarden-use` and `bitwarden-use-agent` and
 require the
 [`pinentry`](https://www.gnupg.org/related_software/pinentry/index.en.html)
-program (to display password prompts).
+program (to display password prompts). The installer also drops a short **`bwu`**
+symlink so you can type `bwu fido2 list` instead of the full name.
 
 ## Configuration
 
