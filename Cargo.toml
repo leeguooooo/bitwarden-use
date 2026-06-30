@@ -1,12 +1,12 @@
 [package]
-name = "bitvault-use"
-version = "0.1.0"
+name = "bitwarden-use"
+version = "0.1.1"
 authors = ["Jesse Luehrs <doy@tozt.net>"]
 edition = "2021"
 rust-version = "1.82.0"
 
 description = "Bitwarden/Vaultwarden CLI with FIDO2 (passkey) extraction"
-repository = "https://github.com/leeguooooo/bitvault-use"
+repository = "https://github.com/leeguooooo/bitwarden-use"
 readme = "README.md"
 keywords = ["bitwarden", "vaultwarden", "passkey", "fido2"]
 categories = ["command-line-utilities", "cryptography"]
@@ -23,11 +23,11 @@ path = "src/lib.rs"
 # config / cache dir stays "rbw" (see src/dirs.rs) so the existing vault login
 # is reused transparently.
 [[bin]]
-name = "bitvault-use"
+name = "bitwarden-use"
 path = "src/bin/rbw/main.rs"
 
 [[bin]]
-name = "bitvault-use-agent"
+name = "bitwarden-use-agent"
 path = "src/bin/rbw-agent/main.rs"
 
 [dependencies]
@@ -136,33 +136,33 @@ depends = "pinentry"
 license-file = ["LICENSE"]
 assets = [
     [
-        "target/release/bitvault-use",
+        "target/release/bitwarden-use",
         "usr/bin/",
         "755",
     ],
     [
-        "target/release/bitvault-use-agent",
+        "target/release/bitwarden-use-agent",
         "usr/bin/",
         "755",
     ],
     [
         "target/release/completion/bash",
-        "usr/share/bash-completion/completions/bitvault-use",
+        "usr/share/bash-completion/completions/bitwarden-use",
         "644",
     ],
     [
         "target/release/completion/zsh",
-        "usr/share/zsh/vendor-completions/_bitvault-use",
+        "usr/share/zsh/vendor-completions/_bitwarden-use",
         "644",
     ],
     [
         "target/release/completion/fish",
-        "usr/share/fish/completions/bitvault-use.fish",
+        "usr/share/fish/completions/bitwarden-use.fish",
         "644",
     ],
     [
         "README.md",
-        "usr/share/doc/bitvault-use/README",
+        "usr/share/doc/bitwarden-use/README",
         "644",
     ],
 ]

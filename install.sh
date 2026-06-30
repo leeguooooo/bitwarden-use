@@ -1,15 +1,15 @@
 #!/bin/sh
-# bitvault-use installer — downloads a prebuilt binary from the latest GitHub
+# bitwarden-use installer — downloads a prebuilt binary from the latest GitHub
 # Release (no npm, no token). Usage:
-#   curl -fsSL https://raw.githubusercontent.com/leeguooooo/bitvault-use/main/install.sh | sh
-# Override install dir:  BITVAULT_INSTALL_DIR=/usr/local/bin sh install.sh
-# Pin a version:         BITVAULT_VERSION=v1.15.0 sh install.sh
+#   curl -fsSL https://raw.githubusercontent.com/leeguooooo/bitwarden-use/main/install.sh | sh
+# Override install dir:  BITWARDEN_INSTALL_DIR=/usr/local/bin sh install.sh
+# Pin a version:         BITWARDEN_VERSION=v1.15.0 sh install.sh
 set -eu
 
-REPO="leeguooooo/bitvault-use"
-BIN="bitvault-use"
-AGENT="bitvault-use-agent"
-INSTALL_DIR="${BITVAULT_INSTALL_DIR:-$HOME/.local/bin}"
+REPO="leeguooooo/bitwarden-use"
+BIN="bitwarden-use"
+AGENT="bitwarden-use-agent"
+INSTALL_DIR="${BITWARDEN_INSTALL_DIR:-$HOME/.local/bin}"
 
 err() { printf 'install: %s\n' "$1" >&2; exit 1; }
 
@@ -23,7 +23,7 @@ case "$os-$arch" in
   *) err "unsupported platform: $os-$arch" ;;
 esac
 
-ver="${BITVAULT_VERSION:-latest}"
+ver="${BITWARDEN_VERSION:-latest}"
 if [ "$ver" = "latest" ]; then
   base="https://github.com/$REPO/releases/latest/download"
 else

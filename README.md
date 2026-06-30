@@ -1,11 +1,11 @@
-# bitvault-use
+# bitwarden-use
 
 <p align="center">
   <img src="assets/hero.png" width="760"
-       alt="bitvault-use pulls a passkey out of your Bitwarden vault so the command line can sign logins headlessly — no browser, no fingerprint tap">
+       alt="bitwarden-use pulls a passkey out of your Bitwarden vault so the command line can sign logins headlessly — no browser, no fingerprint tap">
 </p>
 
-`bitvault-use` is a command line client for
+`bitwarden-use` is a command line client for
 [Bitwarden](https://bitwarden.com/) and self-hosted
 [Vaultwarden](https://github.com/dani-garcia/vaultwarden) servers, with
 first-class support for extracting **FIDO2 / passkey** credentials from your
@@ -14,7 +14,7 @@ fingerprint tap.
 
 Unlike the official stateless CLI — which requires you to manually lock and
 unlock and pass temporary keys around in environment variables —
-`bitvault-use` keeps a background agent (`bitvault-use-agent`) that holds the
+`bitwarden-use` keeps a background agent (`bitwarden-use-agent`) that holds the
 keys in memory, similar to the way `ssh-agent` or `gpg-agent` work. The client
 talks to that agent, so commands can be used directly and handle logging in or
 unlocking as needed.
@@ -24,14 +24,14 @@ unlocking as needed.
 **Prebuilt binary (recommended)** — no Rust toolchain, no npm, no token:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/leeguooooo/bitvault-use/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/leeguooooo/bitwarden-use/main/install.sh | sh
 ```
 
-This pulls `bitvault-use` + `bitvault-use-agent` from the latest
-[GitHub Release](https://github.com/leeguooooo/bitvault-use/releases) (macOS
+This pulls `bitwarden-use` + `bitwarden-use-agent` from the latest
+[GitHub Release](https://github.com/leeguooooo/bitwarden-use/releases) (macOS
 arm64/x64, Linux arm64/x64), verifies the checksum, and installs into
-`~/.local/bin`. Override with `BITVAULT_INSTALL_DIR=/usr/local/bin`, or pin a
-version with `BITVAULT_VERSION=v0.1.0`.
+`~/.local/bin`. Override with `BITWARDEN_INSTALL_DIR=/usr/local/bin`, or pin a
+version with `BITWARDEN_VERSION=v0.1.0`.
 
 **From source** — any platform with a Rust toolchain:
 
@@ -39,14 +39,14 @@ version with `BITVAULT_VERSION=v0.1.0`.
 cargo install --locked --path .
 ```
 
-Both paths produce the two binaries `bitvault-use` and `bitvault-use-agent` and
+Both paths produce the two binaries `bitwarden-use` and `bitwarden-use-agent` and
 require the
 [`pinentry`](https://www.gnupg.org/related_software/pinentry/index.en.html)
 program (to display password prompts).
 
 ## Configuration
 
-Configuration options are set using the `bitvault-use config` command.
+Configuration options are set using the `bitwarden-use config` command.
 Available configuration options:
 
 * `email`: The email address to use as the account name when logging into the
@@ -74,7 +74,7 @@ Available configuration options:
 
 ### Profiles
 
-`bitvault-use` supports different configuration profiles, switched via the
+`bitwarden-use` supports different configuration profiles, switched via the
 `RBW_PROFILE` environment variable. Setting it to a name (for example,
 `RBW_PROFILE=work` or `RBW_PROFILE=personal`) lets you switch between several
 vaults — each uses its own separate configuration, local vault, and agent.
@@ -82,20 +82,20 @@ vaults — each uses its own separate configuration, local vault, and agent.
 ## Usage
 
 Commands can generally be used directly, and will handle logging in or
-unlocking as necessary. For instance, `bitvault-use ls` will unlock the
+unlocking as necessary. For instance, `bitwarden-use ls` will unlock the
 password database before listing entries (but will not log in to the server),
-`bitvault-use sync` will log in before downloading the database (but will not
-unlock it), and `bitvault-use add` will do both.
+`bitwarden-use sync` will log in before downloading the database (but will not
+unlock it), and `bitwarden-use add` will do both.
 
 Logging in and unlocking are only done as necessary, so running
-`bitvault-use login` when already logged in does nothing, and similarly for
-`bitvault-use unlock`. You can explicitly log out with `bitvault-use purge`,
-and explicitly lock the database with `bitvault-use lock` or
-`bitvault-use stop-agent`.
+`bitwarden-use login` when already logged in does nothing, and similarly for
+`bitwarden-use unlock`. You can explicitly log out with `bitwarden-use purge`,
+and explicitly lock the database with `bitwarden-use lock` or
+`bitwarden-use stop-agent`.
 
-`bitvault-use help` gives more information about the available functionality.
+`bitwarden-use help` gives more information about the available functionality.
 
-Run `bitvault-use get <name>` to get your passwords. Use `--full` to also show
+Run `bitwarden-use get <name>` to get your passwords. Use `--full` to also show
 the username and note, `--field=<field>` to get a specific default or custom
 field, and `--raw` to print JSON. In addition to matching against the name,
 you can pass a UUID to search for the entry with that id, or a URL to search
@@ -103,29 +103,29 @@ for an entry with a matching website entry.
 
 *Note for users of the official Bitwarden server (at bitwarden.com)*: the
 official server has a tendency to detect command line traffic as bot traffic.
-To use `bitvault-use` with it, first run `bitvault-use register` to register
+To use `bitwarden-use` with it, first run `bitwarden-use register` to register
 each device with the server. This prompts for your personal API key, which you
 can find using the instructions
 [here](https://bitwarden.com/help/article/personal-api-key/).
 
 ### FIDO2 / passkeys
 
-`bitvault-use fido2` works with FIDO2 (passkey) credentials stored in your
+`bitwarden-use fido2` works with FIDO2 (passkey) credentials stored in your
 vault:
 
-* `bitvault-use fido2 list` — list passkeys (entry name, rpId, credentialId).
-* `bitvault-use fido2 get <name>` — display a passkey, including its decrypted
+* `bitwarden-use fido2 list` — list passkeys (entry name, rpId, credentialId).
+* `bitwarden-use fido2 get <name>` — display a passkey, including its decrypted
   private key as base64url and as a PKCS#8 PEM document. The entry can be
   selected by name, URI, UUID, or by the credentialId of the passkey itself.
 
 ### SSH Agent
 
-`bitvault-use-agent` includes a built-in SSH agent for signing SSH
+`bitwarden-use-agent` includes a built-in SSH agent for signing SSH
 authentication challenges directly. Ensure the agent is running (unlock once),
 then point your SSH client at its socket:
 
 ```sh
-bitvault-use unlock
+bitwarden-use unlock
 export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/rbw/ssh-agent-socket"
 ```
 
@@ -134,11 +134,11 @@ If you're using a profile, the socket is located at
 
 > The on-disk config, cache, and runtime directories are named `rbw` for
 > compatibility, so an existing rbw/Vaultwarden login keeps working under
-> `bitvault-use` with no migration.
+> `bitwarden-use` with no migration.
 
 ### 2FA support
 
-`bitvault-use` supports the following 2FA mechanisms:
+`bitwarden-use` supports the following 2FA mechanisms:
 
 * Email
 * Authenticator App

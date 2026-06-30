@@ -170,7 +170,7 @@ fn connect() -> anyhow::Result<crate::sock::Sock> {
     crate::sock::Sock::connect().with_context(|| {
         let log = rbw::dirs::agent_stderr_file();
         format!(
-            "failed to connect to bitvault-use-agent \
+            "failed to connect to bitwarden-use-agent \
             (this often means that the agent failed to start; \
             check {} for agent logs)",
             log.display()

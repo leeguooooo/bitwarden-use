@@ -7,14 +7,14 @@ use anyhow::Context as _;
 const TOTP_DEFAULT_STEP: u64 = 30;
 
 const MISSING_CONFIG_HELP: &str =
-    "Before using bitvault-use, you must configure the email address you would \
+    "Before using bitwarden-use, you must configure the email address you would \
     like to use to log in to the server by running:\n\n    \
-        bitvault-use config set email <email>\n\n\
+        bitwarden-use config set email <email>\n\n\
     Additionally, if you are using a self-hosted installation, you should \
     run:\n\n    \
-        bitvault-use config set base_url <url>\n\n\
+        bitwarden-use config set base_url <url>\n\n\
     and, if your server has a non-default identity url:\n\n    \
-        bitvault-use config set identity_url <url>\n";
+        bitwarden-use config set identity_url <url>\n";
 
 #[derive(Debug, Clone)]
 pub enum Needle {
@@ -2192,28 +2192,28 @@ fn run_agent() -> anyhow::Result<()> {
             path
         } else {
             // prefer the agent binary sitting next to this executable so a
-            // self-contained install works without bitvault-use-agent on PATH;
+            // self-contained install works without bitwarden-use-agent on PATH;
             // otherwise fall back to a bare name and let PATH resolve it.
             std::env::current_exe()
                 .ok()
                 .and_then(|exe| {
                     exe.parent().map(std::path::Path::to_path_buf)
                 })
-                .map(|dir| dir.join("bitvault-use-agent"))
+                .map(|dir| dir.join("bitwarden-use-agent"))
                 .filter(|p| p.exists())
                 .map_or_else(
-                    || std::ffi::OsString::from("bitvault-use-agent"),
+                    || std::ffi::OsString::from("bitwarden-use-agent"),
                     std::path::PathBuf::into_os_string,
                 )
         };
     let status = std::process::Command::new(&agent_path)
         .status()
-        .context("failed to run bitvault-use-agent")?;
+        .context("failed to run bitwarden-use-agent")?;
     if !status.success() {
         if let Some(code) = status.code() {
             if code != 23 {
                 return Err(anyhow::anyhow!(
-                    "failed to run bitvault-use-agent: {status}"
+                    "failed to run bitwarden-use-agent: {status}"
                 ));
             }
         }

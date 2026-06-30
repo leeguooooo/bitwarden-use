@@ -21,7 +21,7 @@ struct FindArgs {
 
 #[derive(Debug, clap::Parser)]
 #[command(
-    name = "bitvault-use",
+    name = "bitwarden-use",
     version,
     about = "Bitwarden/Vaultwarden CLI with FIDO2 (passkey) extraction"
 )]
