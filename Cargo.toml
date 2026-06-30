@@ -1,8 +1,8 @@
 [package]
 name = "bitwarden-use"
 version = "0.1.1"
-authors = ["Jesse Luehrs <doy@tozt.net>"]
-edition = "2021"
+authors = ["leeguooooo <leeguooooo@gmail.com>"]
+edition = "2026"
 rust-version = "1.82.0"
 
 description = "Bitwarden/Vaultwarden CLI with FIDO2 (passkey) extraction"
