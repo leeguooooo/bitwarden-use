@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+EDITOR=$(mktemp)
+trap 'rm -f $EDITOR' EXIT
+cat > "$EDITOR" <<'EOF'
+#!/bin/sh
+cat > "$1"
+EOF
+chmod 700 "$EDITOR"
+export EDITOR
+
+for entry in $(pass git ls-files | grep '\.gpg$' | sed 's/\.gpg$//'); do
+    echo "$entry"
+    pw=$(pass show "$entry")
+
+    user="${entry##*/}"
+    full_name="${entry%/*}"
+    if echo "$full_name" | grep -q /; then
+        name="${full_name##*/}"
+        folder="${full_name%/*}"
+    else
+        name="$full_name"
+        folder=""
+    fi
+    if echo "$name" | grep -q '\.'; then
+        if [ -z "$folder" ]; then
+            echo "$pw" | rbw add --uri "$name" "$name" "$user"
+        else
+            echo "$pw" | rbw add --uri "$name" --folder "$folder" "$name" "$user"
+        fi
+    else
+        if [ -z "$folder" ]; then
+            echo "$pw" | rbw add "$name" "$user"
+        else
+            echo "$pw" | rbw add --folder "$folder" "$name" "$user"
+        fi
+    fi
+done

@@ -1,0 +1,168 @@
+[package]
+name = "bitvault-use"
+version = "1.15.0"
+authors = ["Jesse Luehrs <doy@tozt.net>"]
+edition = "2021"
+rust-version = "1.82.0"
+
+description = "Bitwarden/Vaultwarden CLI with FIDO2 (passkey) extraction"
+repository = "https://github.com/leeguooooo/bitvault-use"
+readme = "README.md"
+keywords = ["bitwarden", "vaultwarden", "passkey", "fido2"]
+categories = ["command-line-utilities", "cryptography"]
+license = "MIT"
+include = ["src/**/*", "bin/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
+
+# Keep the internal library crate name "rbw" so the binaries' `rbw::...` paths
+# (and the on-disk config/cache dir derived from it) are unchanged.
+[lib]
+name = "rbw"
+path = "src/lib.rs"
+
+# Rename the two binaries without moving the source directories. The on-disk
+# config / cache dir stays "rbw" (see src/dirs.rs) so the existing vault login
+# is reused transparently.
+[[bin]]
+name = "bitvault-use"
+path = "src/bin/rbw/main.rs"
+
+[[bin]]
+name = "bitvault-use-agent"
+path = "src/bin/rbw-agent/main.rs"
+
+[dependencies]
+aes = "0.8.4"
+anyhow = "1.0.100"
+argon2 = "0.5.3"
+arrayvec = "0.7.6"
+axum = "0.8.8"
+base32 = "0.5.1"
+base64 = "0.22.1"
+block-padding = "0.3.3"
+cbc = { version = "0.1.2", features = ["alloc", "std"] }
+clap_complete = "4.5.62"
+clap = { version = "4.5.53", features = ["wrap_help", "derive"] }
+clap_complete_nushell = "4.5.10"
+clap_complete_fig = "4.5.2"
+daemonize = "0.5.0"
+directories = "6.0.0"
+env_logger = "0.11.8"
+futures = "0.3.31"
+futures-channel = "0.3.31"
+futures-util = "0.3.31"
+hkdf = "0.12.4"
+hmac = { version = "0.12.1", features = ["std"] }
+humantime = "2.3.0"
+is-terminal = "0.4.17"
+libc = "0.2.178"
+log = "0.4.29"
+open = "5.3.3"
+pbkdf2 = "0.12.2"
+percent-encoding = "2.3.2"
+pkcs8 = "0.10.2"
+# TODO: necessary because some packages still depend on old rand
+rand_8 = { package = "rand", version = "0.8.5" }
+rand = "0.9.2"
+regex = "1.12.2"
+region = "3.0.2"
+reqwest = { version = "0.12.28", default-features = false, features = [
+    "blocking",
+    "json",
+    "rustls-tls-native-roots",
+] }
+rmpv = "1.3.0"
+rsa = "0.9.9"
+rustix = { version = "1.1.3", features = [
+    "termios",
+    "process",
+    "pipe",
+] }
+serde_json = "1.0.147"
+serde_path_to_error = "0.1.20"
+serde_repr = "0.1.20"
+serde = { version = "1.0.228", features = ["derive"] }
+sha1 = "0.10.6"
+sha2 = "0.10.9"
+signature = "2.2.0"
+ssh-agent-lib = "0.5.1"
+tempfile = "3.24.0"
+terminal_size = "0.4.3"
+textwrap = "0.16.2"
+thiserror = "2.0.17"
+tokio-stream = { version = "0.1.17", features = ["net"] }
+tokio-tungstenite = { version = "0.28", features = [
+    "rustls-tls-native-roots",
+    "url",
+] }
+tokio = { version = "1.48.0", features = ["full"] }
+totp-rs = { version = "5.7.0", features = ["steam"] }
+url = "2.5.7"
+urlencoding = "2.1.3"
+uuid = { version = "1.19.0", features = ["v4"] }
+zeroize = "1.8.2"
+
+arboard = { version = "3.6.1", default-features = false, features = [
+    "wayland-data-control",
+], optional = true }
+
+[features]
+default = ["clipboard"]
+clipboard = ["arboard"]
+
+[lints.clippy]
+cargo = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+as_conversions = "warn"
+get_unwrap = "warn"
+cognitive_complexity = "allow"
+missing_const_for_fn = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+fn_params_excessive_bools = "allow"
+too_many_arguments = "allow"
+too_many_lines = "allow"
+type_complexity = "allow"
+multiple_crate_versions = "allow"
+large_enum_variant = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+significant_drop_tightening = "allow"
+struct_field_names = "allow"
+
+[package.metadata.deb]
+depends = "pinentry"
+license-file = ["LICENSE"]
+assets = [
+    [
+        "target/release/bitvault-use",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "target/release/bitvault-use-agent",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "target/release/completion/bash",
+        "usr/share/bash-completion/completions/bitvault-use",
+        "644",
+    ],
+    [
+        "target/release/completion/zsh",
+        "usr/share/zsh/vendor-completions/_bitvault-use",
+        "644",
+    ],
+    [
+        "target/release/completion/fish",
+        "usr/share/fish/completions/bitvault-use.fish",
+        "644",
+    ],
+    [
+        "README.md",
+        "usr/share/doc/bitvault-use/README",
+        "644",
+    ],
+]
