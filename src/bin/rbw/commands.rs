@@ -1742,7 +1742,7 @@ pub fn fido2_assert(
     Ok(())
 }
 
-/// `authenticatorData` per WebAuthn §6.1: `SHA-256(rpId) || flags || counter` (BE).
+/// `authenticatorData` per `WebAuthn` §6.1: `SHA-256(rpId) || flags || counter` (BE).
 /// UP (0x01) is always set for an assertion this command produces; UV (0x04)
 /// only when the caller vouches for it. No attested credential data, no
 /// extensions.
