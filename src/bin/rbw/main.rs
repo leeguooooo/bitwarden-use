@@ -369,6 +369,28 @@ enum Fido2 {
         #[command(flatten)]
         find_args: FindArgs,
     },
+    #[command(
+        about = "Sign a WebAuthn assertion with a stored passkey; the private key never leaves the process",
+        long_about = "Sign a WebAuthn assertion with a stored passkey\n\n\
+            Builds authenticatorData (SHA-256 of the rpId, flags, counter) and \
+            signs authenticatorData || clientDataHash with the passkey's P-256 \
+            key (ES256). Prints JSON with the base64url authenticatorData and \
+            DER signature. This is the getAssertion half of an authenticator; \
+            unlike `fido2 get` it never exports the private key, so a platform \
+            bridge can pass a challenge in and a signature out."
+    )]
+    Assert {
+        #[command(flatten)]
+        find_args: FindArgs,
+        #[arg(long, help = "Relying party id; defaults to the credential's stored rpId")]
+        rp_id: Option<String>,
+        #[arg(long, help = "SHA-256 of the clientDataJSON, 32 bytes as hex or base64url")]
+        client_data_hash: String,
+        #[arg(long, help = "Signature counter to report; defaults to the stored counter (0 for synced passkeys)")]
+        counter: Option<u32>,
+        #[arg(long, help = "Set the UV (user verified) flag in addition to UP")]
+        uv: bool,
+    },
 }
 
 impl Fido2 {
@@ -376,6 +398,7 @@ impl Fido2 {
         match self {
             Self::List => "list",
             Self::Get { .. } => "get",
+            Self::Assert { .. } => "assert",
         }
         .to_string()
     }
@@ -539,6 +562,16 @@ fn main() {
         Opt::Purge => commands::purge(),
         Opt::Fido2 { fido2 } => match fido2 {
             Fido2::List => commands::fido2_list(),
+            Fido2::Assert { find_args, rp_id, client_data_hash, counter, uv } => commands::fido2_assert(
+                find_args.needle,
+                find_args.user.as_deref(),
+                find_args.folder.as_deref(),
+                find_args.ignorecase,
+                rp_id.as_deref(),
+                &client_data_hash,
+                counter,
+                uv,
+            ),
             Fido2::Get { find_args } => commands::fido2_get(
                 find_args.needle,
                 find_args.user.as_deref(),

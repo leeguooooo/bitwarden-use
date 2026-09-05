@@ -1610,6 +1610,214 @@ fn display_fido2_credential(
     Ok(())
 }
 
+/// `fido2 assert` (#1): the getAssertion half of an authenticator, on top of
+/// the stored passkey. The private key is decoded inside this process, used
+/// once to sign, and dropped — it is never printed, unlike `fido2 get`. A
+/// platform bridge (virtual CTAP-HID, D-Bus, …) can therefore hand a
+/// challenge in and take a signature out without ever holding key material.
+///
+/// Consent is the caller's job: this command signs whatever it is asked to.
+/// A system-wide authenticator built on it must gate every call on the user.
+#[allow(clippy::too_many_arguments)]
+pub fn fido2_assert(
+    needle: Needle,
+    user: Option<&str>,
+    folder: Option<&str>,
+    ignore_case: bool,
+    rp_id_override: Option<&str>,
+    client_data_hash: &str,
+    counter_override: Option<u32>,
+    uv: bool,
+) -> anyhow::Result<()> {
+    use base64::Engine as _;
+    let cdh = decode_32_bytes(client_data_hash)
+        .context("--client-data-hash must be 32 bytes as hex or base64url")?;
+
+    unlock()?;
+    let db = load_db()?;
+
+    // Same lookup as `fido2 get`: a credentialId first, then name/URI/UUID.
+    let needle_str = format!("{needle}");
+    let by_credential: Vec<rbw::db::Entry> = db
+        .entries
+        .iter()
+        .filter(|entry| match &entry.data {
+            rbw::db::EntryData::Login {
+                fido2_credentials, ..
+            } => fido2_credentials.iter().any(|cred| {
+                decrypt_fido2_field(cred.credential_id.as_deref(), entry)
+                    .as_deref()
+                    == Some(needle_str.as_str())
+            }),
+            _ => false,
+        })
+        .cloned()
+        .collect();
+    let entry = match by_credential.as_slice() {
+        [entry] => entry.clone(),
+        [_, ..] => {
+            return Err(anyhow::anyhow!(
+                "credentialId '{needle_str}' matches more than one entry"
+            ));
+        }
+        [] => {
+            let desc = format!(
+                "{}{}",
+                user.map_or_else(String::new, |s| format!("{s}@")),
+                needle
+            );
+            find_entry(&db, needle, user, folder, ignore_case)
+                .with_context(|| format!("couldn't find entry for '{desc}'"))?
+                .0
+        }
+    };
+    let rbw::db::EntryData::Login {
+        fido2_credentials, ..
+    } = &entry.data
+    else {
+        return Err(anyhow::anyhow!("'{}' is not a login entry", entry.name));
+    };
+    // Pick the credential: the one whose credentialId matched, else the only one.
+    let cred = fido2_credentials
+        .iter()
+        .find(|cred| {
+            decrypt_fido2_field(cred.credential_id.as_deref(), &entry).as_deref()
+                == Some(needle_str.as_str())
+        })
+        .or_else(|| (fido2_credentials.len() == 1).then(|| &fido2_credentials[0]))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "'{}' has {} passkeys; name one by its credentialId",
+                entry.name,
+                fido2_credentials.len()
+            )
+        })?;
+
+    let credential_id =
+        decrypt_fido2_field(cred.credential_id.as_deref(), &entry).unwrap_or_default();
+    let stored_rp_id = decrypt_fido2_field(cred.rp_id.as_deref(), &entry).unwrap_or_default();
+    let user_handle = decrypt_fido2_field(cred.user_handle.as_deref(), &entry).unwrap_or_default();
+    let key_type = decrypt_fido2_field(cred.key_type.as_deref(), &entry).unwrap_or_default();
+    let key_curve = decrypt_fido2_field(cred.key_curve.as_deref(), &entry).unwrap_or_default();
+    let key_value = decrypt_fido2_field(cred.key_value.as_deref(), &entry)
+        .ok_or_else(|| anyhow::anyhow!("passkey has no decryptable private key"))?;
+    let stored_counter: u32 = decrypt_fido2_field(cred.counter.as_deref(), &entry)
+        .and_then(|c| c.trim().parse().ok())
+        .unwrap_or(0);
+
+    if key_type != "public-key" || key_curve != "P-256" {
+        return Err(anyhow::anyhow!(
+            "only P-256 (ES256) passkeys are supported; this one is keyType={key_type:?} keyCurve={key_curve:?}"
+        ));
+    }
+    let rp_id = rp_id_override.unwrap_or(&stored_rp_id);
+    if rp_id.is_empty() {
+        return Err(anyhow::anyhow!("no rpId stored on this passkey; pass --rp-id"));
+    }
+    if rp_id_override.is_some_and(|r| r != stored_rp_id) && !stored_rp_id.is_empty() {
+        return Err(anyhow::anyhow!(
+            "--rp-id {rp_id:?} does not match the passkey's rpId {stored_rp_id:?}; refusing to sign for a different relying party"
+        ));
+    }
+    let counter = counter_override.unwrap_or(stored_counter);
+
+    let der = decode_key_value(&key_value)
+        .context("private key was not valid base64url PKCS#8")?;
+    let auth_data = build_authenticator_data(rp_id, true, uv, counter);
+    let signature = sign_assertion(&der, &auth_data, &cdh)?;
+
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let out = serde_json::json!({
+        "credentialId": credential_id,
+        "rpId": rp_id,
+        "userHandle": user_handle,
+        "counter": counter,
+        "flags": { "up": true, "uv": uv },
+        "clientDataHash": hex_encode(&cdh),
+        "authenticatorData": b64.encode(&auth_data),
+        "signature": b64.encode(&signature),
+        "alg": -7,
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+/// `authenticatorData` per WebAuthn §6.1: `SHA-256(rpId) || flags || counter` (BE).
+/// UP (0x01) is always set for an assertion this command produces; UV (0x04)
+/// only when the caller vouches for it. No attested credential data, no
+/// extensions.
+fn build_authenticator_data(rp_id: &str, up: bool, uv: bool, counter: u32) -> Vec<u8> {
+    use sha2::Digest as _;
+    let mut out = Vec::with_capacity(37);
+    out.extend_from_slice(&sha2::Sha256::digest(rp_id.as_bytes()));
+    let mut flags = 0u8;
+    if up {
+        flags |= 0x01;
+    }
+    if uv {
+        flags |= 0x04;
+    }
+    out.push(flags);
+    out.extend_from_slice(&counter.to_be_bytes());
+    out
+}
+
+/// ES256 over authenticatorData || clientDataHash; DER-encoded signature.
+fn sign_assertion(
+    pkcs8_der: &[u8],
+    auth_data: &[u8],
+    client_data_hash: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    use p256::pkcs8::DecodePrivateKey as _;
+    use signature::Signer as _;
+    let key = p256::ecdsa::SigningKey::from_pkcs8_der(pkcs8_der)
+        .map_err(|e| anyhow::anyhow!("private key is not a PKCS#8 P-256 key: {e}"))?;
+    let mut message = Vec::with_capacity(auth_data.len() + client_data_hash.len());
+    message.extend_from_slice(auth_data);
+    message.extend_from_slice(client_data_hash);
+    let sig: p256::ecdsa::Signature = key.sign(&message);
+    Ok(sig.to_der().as_bytes().to_vec())
+}
+
+fn decode_key_value(key_value_b64url: &str) -> anyhow::Result<Vec<u8>> {
+    use base64::Engine as _;
+    let trimmed = key_value_b64url.trim();
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(trimmed)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(trimmed))
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(trimmed))
+        .or_else(|_| base64::engine::general_purpose::STANDARD.decode(trimmed))
+        .context("not base64")
+}
+
+/// 32 bytes given as 64 hex chars or as base64url (43/44 chars).
+fn decode_32_bytes(input: &str) -> anyhow::Result<[u8; 32]> {
+    use base64::Engine as _;
+    let s = input.trim();
+    let bytes: Vec<u8> = if s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        (0..64)
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
+            .collect::<Result<_, _>>()
+            .context("bad hex")?
+    } else {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(s)
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(s))
+            .context("neither 64 hex chars nor base64url")?
+    };
+    <[u8; 32]>::try_from(bytes.as_slice())
+        .map_err(|_| anyhow::anyhow!("expected 32 bytes, got {}", bytes.len()))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
 // The decrypted KeyValue is a base64url-encoded PKCS#8 private key. Decode it
 // back to DER and re-wrap it as a standard PKCS#8 PEM document.
 fn fido2_private_key_pem(key_value_b64url: &str) -> anyhow::Result<String> {
@@ -4592,5 +4800,54 @@ mod test {
                 notes: None,
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod fido2_assert_tests {
+    use super::*;
+
+    #[test]
+    fn authenticator_data_layout_matches_webauthn() {
+        let ad = build_authenticator_data("example.com", true, false, 7);
+        assert_eq!(ad.len(), 37);
+        use sha2::Digest as _;
+        assert_eq!(&ad[..32], sha2::Sha256::digest(b"example.com").as_slice());
+        assert_eq!(ad[32], 0x01, "UP only");
+        assert_eq!(&ad[33..], &7u32.to_be_bytes());
+        let ad_uv = build_authenticator_data("example.com", true, true, 0);
+        assert_eq!(ad_uv[32], 0x05, "UP|UV");
+    }
+
+    /// Sign with a fresh key, verify with its public half: the signature must
+    /// cover authenticatorData || clientDataHash exactly, DER-encoded.
+    #[test]
+    fn assertion_signature_verifies_with_the_public_key() {
+        use p256::pkcs8::EncodePrivateKey as _;
+        use signature::Verifier as _;
+        let key = p256::ecdsa::SigningKey::random(&mut rand_8::thread_rng());
+        let der = key.to_pkcs8_der().unwrap();
+        let cdh = [0x42u8; 32];
+        let ad = build_authenticator_data("bank.example", true, true, 3);
+        let sig = sign_assertion(der.as_bytes(), &ad, &cdh).unwrap();
+        let parsed = p256::ecdsa::Signature::from_der(&sig).unwrap();
+        let mut msg = ad.clone();
+        msg.extend_from_slice(&cdh);
+        assert!(key.verifying_key().verify(&msg, &parsed).is_ok());
+        // Tampered authenticatorData must not verify.
+        let mut bad = msg.clone();
+        bad[33] ^= 0x04;
+        assert!(key.verifying_key().verify(&bad, &parsed).is_err());
+    }
+
+    #[test]
+    fn client_data_hash_accepts_hex_and_base64url_only_at_32_bytes() {
+        let hex = "ab".repeat(32);
+        assert_eq!(decode_32_bytes(&hex).unwrap(), [0xabu8; 32]);
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x01u8; 32]);
+        assert_eq!(decode_32_bytes(&b64).unwrap(), [0x01u8; 32]);
+        assert!(decode_32_bytes("abcd").is_err());
+        assert!(decode_32_bytes(&"ab".repeat(31)).is_err());
     }
 }
