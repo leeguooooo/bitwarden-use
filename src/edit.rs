@@ -9,6 +9,13 @@ pub fn edit(contents: &str, help: &str) -> Result<String> {
         // directly read from piped content
         return match std::io::read_to_string(std::io::stdin()) {
             Err(e) => Err(Error::FailedToReadFromStdin { err: e }),
+            // An empty pipe used to sail straight through: the caller parses
+            // "" into password: None, notes: None and writes that back, so a
+            // stray `bwu edit foo < /dev/null` — or any script whose command
+            // substitution came back empty — silently blanks a real entry.
+            // A write that destroys data must not be the default outcome of
+            // producing no input.
+            Ok(res) if res.trim().is_empty() => Err(Error::EmptyStdinEdit),
             Ok(res) => Ok(res),
         };
     }

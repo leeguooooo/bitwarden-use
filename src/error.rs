@@ -40,6 +40,14 @@ pub enum Error {
     FailedToReadFromStdin { err: std::io::Error },
 
     #[error(
+        "refusing to write an empty entry: nothing was read from stdin.\n\
+         Piping empty or whitespace-only input would blank the password and \
+         notes of an existing entry. If you really mean to clear a field, \
+         pipe an explicit value."
+    )]
+    EmptyStdinEdit,
+
+    #[error(
         "failed to run editor {}: {err}",
         .editor.to_string_lossy(),
     )]
