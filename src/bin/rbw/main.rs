@@ -215,6 +215,31 @@ enum Opt {
         find_args: FindArgs,
     },
 
+    #[command(
+        about = "Set individual fields of a login without touching the rest",
+        long_about = "Set individual fields of a login without touching the rest\n\n\
+            Unlike `edit`, which round-trips the whole password + notes through \
+            an editor (and cannot express a TOTP seed at all), `set` updates \
+            exactly the fields you name and leaves every other field as it is. \
+            Pass an empty string to clear a field. Refuses to run with no \
+            field given, so a script whose value came back empty can never \
+            silently blank an entry."
+    )]
+    Set {
+        #[command(flatten)]
+        find_args: FindArgs,
+        #[arg(long, help = "TOTP seed (otpauth:// URI or base32 secret)")]
+        totp: Option<String>,
+        #[arg(long, help = "Username")]
+        username: Option<String>,
+        #[arg(long, help = "Password (also records the previous one in history)")]
+        password: Option<String>,
+        #[arg(long, help = "URI; repeat to set several (replaces the list)")]
+        uri: Vec<String>,
+        #[arg(long, help = "Notes")]
+        notes: Option<String>,
+    },
+
     #[command(about = "Remove a given entry", visible_alias = "rm")]
     Remove {
         #[command(flatten)]
@@ -269,6 +294,7 @@ impl Opt {
             Self::Add { .. } => "add".to_string(),
             Self::Generate { .. } => "generate".to_string(),
             Self::Edit { .. } => "edit".to_string(),
+            Self::Set { .. } => "set".to_string(),
             Self::Remove { .. } => "remove".to_string(),
             Self::History { .. } => "history".to_string(),
             Self::Lock => "lock".to_string(),
@@ -483,6 +509,19 @@ fn main() {
             find_args.user.as_deref(),
             find_args.folder.as_deref(),
             find_args.ignorecase,
+        ),
+        Opt::Set { find_args, totp, username, password, uri, notes } => commands::set(
+            find_args.needle,
+            find_args.user.as_deref(),
+            find_args.folder.as_deref(),
+            find_args.ignorecase,
+            commands::SetFields {
+                totp,
+                username,
+                password,
+                uris: uri,
+                notes,
+            },
         ),
         Opt::Remove { find_args } => commands::remove(
             find_args.needle,

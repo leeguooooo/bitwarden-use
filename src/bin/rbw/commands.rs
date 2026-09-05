@@ -2096,6 +2096,185 @@ pub fn edit(
     Ok(())
 }
 
+/// Fields `set` may replace. `None` = leave alone; `Some("")` = clear.
+/// `uris` empty = leave alone (an explicit clear is not offered: a login with
+/// no URI is a login the browser integration can never match).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SetFields {
+    pub totp: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub uris: Vec<String>,
+    pub notes: Option<String>,
+}
+
+impl SetFields {
+    /// Which fields this call touches, in display order. Empty means the call
+    /// would be a no-op — and a no-op write to a vault is refused, not applied.
+    fn touched(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.totp.is_some() {
+            out.push("totp");
+        }
+        if self.username.is_some() {
+            out.push("username");
+        }
+        if self.password.is_some() {
+            out.push("password");
+        }
+        if !self.uris.is_empty() {
+            out.push("uris");
+        }
+        if self.notes.is_some() {
+            out.push("notes");
+        }
+        out
+    }
+}
+
+/// `set`: field-level update of a login (#2). `edit`'s editor round-trip
+/// ("first line password, rest notes") cannot express a TOTP seed, so every
+/// entry created from the CLI was stuck with `code` failing on "entry does not
+/// contain a totp secret". This writes exactly the named fields through the
+/// same encrypt + `actions::edit` path `edit` uses, and reports what changed.
+pub fn set(
+    name: Needle,
+    user: Option<&str>,
+    folder: Option<&str>,
+    ignore_case: bool,
+    fields: SetFields,
+) -> anyhow::Result<()> {
+    let touched = fields.touched();
+    if touched.is_empty() {
+        return Err(anyhow::anyhow!(
+            "nothing to set: pass at least one of --totp, --username, --password, --uri, --notes"
+        ));
+    }
+
+    unlock()?;
+
+    let mut db = load_db()?;
+    let access_token = db.access_token.as_ref().unwrap();
+    let refresh_token = db.refresh_token.as_ref().unwrap();
+
+    let desc = format!(
+        "{}{}",
+        user.map_or_else(String::new, |s| format!("{s}@")),
+        name
+    );
+
+    let (entry, decrypted) = find_entry(&db, name, user, folder, ignore_case)
+        .with_context(|| format!("couldn't find entry for '{desc}'"))?;
+
+    let rbw::db::EntryData::Login {
+        username: entry_username,
+        password: entry_password,
+        uris: entry_uris,
+        totp: entry_totp,
+        fido2_credentials: entry_fido2_credentials,
+    } = &entry.data
+    else {
+        return Err(anyhow::anyhow!(
+            "set is only supported for login entries ('{desc}' is not one)"
+        ));
+    };
+    let org_id = entry.org_id.as_deref();
+
+    // "" clears; anything else is encrypted in place of the stored value.
+    let replace = |new: &Option<String>,
+                   current: &Option<String>|
+     -> anyhow::Result<Option<String>> {
+        match new.as_deref() {
+            None => Ok(current.clone()),
+            Some("") => Ok(None),
+            Some(v) => Ok(Some(crate::actions::encrypt(v, org_id)?)),
+        }
+    };
+
+    let mut history = entry.history.clone();
+    let password = match fields.password.as_deref() {
+        None => entry_password.clone(),
+        Some(v) => {
+            // Same bookkeeping as `edit`: the previous password goes to history.
+            if let Some(prev) = entry_password.clone() {
+                history.insert(
+                    0,
+                    rbw::db::HistoryEntry {
+                        last_used_date: format!(
+                            "{}",
+                            humantime::format_rfc3339(std::time::SystemTime::now())
+                        ),
+                        password: prev,
+                    },
+                );
+            }
+            if v.is_empty() {
+                None
+            } else {
+                Some(crate::actions::encrypt(v, org_id)?)
+            }
+        }
+    };
+    let uris = if fields.uris.is_empty() {
+        entry_uris.clone()
+    } else {
+        fields
+            .uris
+            .iter()
+            .map(|u| {
+                Ok(rbw::db::Uri {
+                    uri: crate::actions::encrypt(u, org_id)?,
+                    match_type: None,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?
+    };
+    let notes = match fields.notes.as_deref() {
+        None => decrypted
+            .notes
+            .as_deref()
+            .map(|n| crate::actions::encrypt(n, org_id))
+            .transpose()?,
+        Some("") => None,
+        Some(v) => Some(crate::actions::encrypt(v, org_id)?),
+    };
+
+    let data = rbw::db::EntryData::Login {
+        username: replace(&fields.username, entry_username)?,
+        password,
+        uris,
+        totp: replace(&fields.totp, entry_totp)?,
+        fido2_credentials: entry_fido2_credentials.clone(),
+    };
+
+    if let (Some(access_token), ()) = rbw::actions::edit(
+        access_token,
+        refresh_token,
+        &entry.id,
+        org_id,
+        &entry.name,
+        &data,
+        &entry.fields,
+        notes.as_deref(),
+        entry.folder_id.as_deref(),
+        &history,
+    )? {
+        db.access_token = Some(access_token);
+        save_db(&db)?;
+    }
+
+    crate::actions::sync()?;
+
+    // The diff-style receipt #2 asked for: what moved, what did not.
+    let all = ["totp", "username", "password", "uris", "notes"];
+    let unchanged: Vec<&str> = all.iter().copied().filter(|f| !touched.contains(f)).collect();
+    println!("{}: set {}", entry.name, touched.join(", "));
+    if !unchanged.is_empty() {
+        println!("unchanged: {}", unchanged.join(", "));
+    }
+    Ok(())
+}
+
 pub fn remove(
     name: Needle,
     username: Option<&str>,
