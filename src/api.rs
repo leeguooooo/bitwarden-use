@@ -487,9 +487,10 @@ impl SyncResCipher {
                             .collect()
                     },
                 ),
-                fido2_credentials: login.fido2_credentials.as_ref().map_or_else(
-                    std::vec::Vec::new,
-                    |creds| {
+                fido2_credentials: login
+                    .fido2_credentials
+                    .as_ref()
+                    .map_or_else(std::vec::Vec::new, |creds| {
                         creds
                             .iter()
                             .map(|cred| crate::db::Fido2Credential {
@@ -507,8 +508,7 @@ impl SyncResCipher {
                                 creation_date: cred.creation_date.clone(),
                             })
                             .collect()
-                    },
-                ),
+                    }),
             }
         } else if let Some(card) = &self.card {
             crate::db::EntryData::Card {
@@ -825,34 +825,6 @@ struct CiphersPostReq {
     identity: Option<CipherIdentity>,
     #[serde(rename = "secureNote")]
     secure_note: Option<CipherSecureNote>,
-}
-
-#[derive(serde::Serialize, Debug)]
-struct CiphersPutReq {
-    #[serde(rename = "type")]
-    ty: u32, // XXX what are the valid types?
-    #[serde(rename = "folderId")]
-    folder_id: Option<String>,
-    #[serde(rename = "organizationId")]
-    organization_id: Option<String>,
-    name: String,
-    notes: Option<String>,
-    login: Option<CipherLogin>,
-    card: Option<CipherCard>,
-    identity: Option<CipherIdentity>,
-    fields: Vec<CipherField>,
-    #[serde(rename = "secureNote")]
-    secure_note: Option<CipherSecureNote>,
-    #[serde(rename = "passwordHistory")]
-    password_history: Vec<CiphersPutReqHistory>,
-}
-
-#[derive(serde::Serialize, Debug)]
-struct CiphersPutReqHistory {
-    #[serde(rename = "LastUsedDate")]
-    last_used_date: String,
-    #[serde(rename = "Password")]
-    password: String,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -1384,154 +1356,62 @@ impl Client {
         }
     }
 
-    pub fn edit(
+    /// Preserve server-only metadata and reject stale edits before PUT.
+    pub fn patch_cipher(
         &self,
         access_token: &str,
         id: &str,
-        org_id: Option<&str>,
-        name: &str,
-        data: &crate::db::EntryData,
-        fields: &[crate::db::Field],
-        notes: Option<&str>,
-        folder_uuid: Option<&str>,
-        history: &[crate::db::HistoryEntry],
+        patch: &crate::mutation::Patch,
     ) -> Result<()> {
-        let mut req = CiphersPutReq {
-            ty: match data {
-                crate::db::EntryData::Login { .. } => 1,
-                crate::db::EntryData::SecureNote => 2,
-                crate::db::EntryData::Card { .. } => 3,
-                crate::db::EntryData::Identity { .. } => 4,
-                crate::db::EntryData::SshKey { .. } => unreachable!(),
-            },
-            folder_id: folder_uuid.map(std::string::ToString::to_string),
-            organization_id: org_id.map(std::string::ToString::to_string),
-            name: name.to_string(),
-            notes: notes.map(std::string::ToString::to_string),
-            login: None,
-            card: None,
-            identity: None,
-            secure_note: None,
-            fields: fields
-                .iter()
-                .map(|field| CipherField {
-                    ty: field.ty,
-                    name: field.name.clone(),
-                    value: field.value.clone(),
-                    linked_id: field.linked_id,
-                })
-                .collect(),
-            password_history: history
-                .iter()
-                .map(|entry| CiphersPutReqHistory {
-                    last_used_date: entry.last_used_date.clone(),
-                    password: entry.password.clone(),
-                })
-                .collect(),
-        };
-        match data {
-            crate::db::EntryData::Login {
-                username,
-                password,
-                totp,
-                uris,
-                ..
-            } => {
-                let uris = if uris.is_empty() {
-                    None
-                } else {
-                    Some(
-                        uris.iter()
-                            .map(|s| CipherLoginUri {
-                                uri: Some(s.uri.clone()),
-                                match_type: s.match_type,
-                            })
-                            .collect(),
-                    )
-                };
-                req.login = Some(CipherLogin {
-                    username: username.clone(),
-                    password: password.clone(),
-                    totp: totp.clone(),
-                    uris,
-                    fido2_credentials: None,
-                });
-            }
-            crate::db::EntryData::Card {
-                cardholder_name,
-                number,
-                brand,
-                exp_month,
-                exp_year,
-                code,
-            } => {
-                req.card = Some(CipherCard {
-                    cardholder_name: cardholder_name.clone(),
-                    number: number.clone(),
-                    brand: brand.clone(),
-                    exp_month: exp_month.clone(),
-                    exp_year: exp_year.clone(),
-                    code: code.clone(),
-                });
-            }
-            crate::db::EntryData::Identity {
-                title,
-                first_name,
-                middle_name,
-                last_name,
-                address1,
-                address2,
-                address3,
-                city,
-                state,
-                postal_code,
-                country,
-                phone,
-                email,
-                ssn,
-                license_number,
-                passport_number,
-                username,
-            } => {
-                req.identity = Some(CipherIdentity {
-                    title: title.clone(),
-                    first_name: first_name.clone(),
-                    middle_name: middle_name.clone(),
-                    last_name: last_name.clone(),
-                    address1: address1.clone(),
-                    address2: address2.clone(),
-                    address3: address3.clone(),
-                    city: city.clone(),
-                    state: state.clone(),
-                    postal_code: postal_code.clone(),
-                    country: country.clone(),
-                    phone: phone.clone(),
-                    email: email.clone(),
-                    ssn: ssn.clone(),
-                    license_number: license_number.clone(),
-                    passport_number: passport_number.clone(),
-                    username: username.clone(),
-                });
-            }
-            crate::db::EntryData::SecureNote => {
-                req.secure_note = Some(CipherSecureNote {});
-            }
-            crate::db::EntryData::SshKey { .. } => unreachable!(),
+        let mut builder = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10));
+        if let Some(path) = &self.client_cert_path {
+            let bytes =
+                zeroize::Zeroizing::new(std::fs::read(path).map_err(
+                    |source| Error::LoadClientCert {
+                        source,
+                        file: path.clone(),
+                    },
+                )?);
+            let identity = reqwest::Identity::from_pem(&bytes)
+                .map_err(|source| Error::CreateReqwestClient { source })?;
+            builder = builder.identity(identity);
         }
-        let client = reqwest::blocking::Client::new();
-        let res = client
-            .put(self.api_url(&format!("/ciphers/{id}")))
-            .header("Authorization", format!("Bearer {access_token}"))
-            .json(&req)
+        let client = builder
+            .build()
+            .map_err(|source| Error::CreateReqwestClient { source })?;
+        let endpoint = self.api_url(&format!("/ciphers/{id}"));
+        let response = client
+            .get(&endpoint)
+            .bearer_auth(access_token)
             .send()
             .map_err(|source| Error::Reqwest { source })?;
-        match res.status() {
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(Error::RequestUnauthorized);
+        }
+        if !response.status().is_success() {
+            return Err(Error::RequestFailed {
+                status: response.status().as_u16(),
+            });
+        }
+        let mut cipher: serde_json::Value = response
+            .json()
+            .map_err(|source| Error::Reqwest { source })?;
+        patch.apply(&mut cipher)?;
+        let response = client
+            .put(endpoint)
+            .bearer_auth(access_token)
+            .json(&cipher)
+            .send()
+            .map_err(|source| Error::Reqwest { source })?;
+        match response.status() {
             reqwest::StatusCode::OK => Ok(()),
             reqwest::StatusCode::UNAUTHORIZED => {
                 Err(Error::RequestUnauthorized)
             }
-            _ => Err(Error::RequestFailed {
-                status: res.status().as_u16(),
+            status => Err(Error::RequestFailed {
+                status: status.as_u16(),
             }),
         }
     }
@@ -1834,4 +1714,88 @@ fn classify_login_error(error_res: &ConnectErrorRes, code: u16) -> Error {
 
     log::warn!("unexpected error received during login: {error_res:?}");
     Error::RequestFailed { status: code }
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+    use std::io::{BufRead as _, Read as _, Write as _};
+
+    #[test]
+    fn patch_transport_preserves_cipher_and_sends_revision() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let original = serde_json::json!({"id":"fixture", "revisionDate":"2026-09-06T00:00:00Z", "favorite":true,
+                "reprompt":1, "key":null, "login":{"password":"encrypted-old", "fido2Credentials":[{"keyValue":"encrypted-passkey"}]},
+                "attachments":[{"id":"attachment","fileName":"encrypted-name","key":"encrypted-key"}]});
+            for method in ["GET", "PUT"] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(
+                        10,
+                    )))
+                    .unwrap();
+                let mut reader =
+                    std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert!(
+                    line.starts_with(&format!("{method} /ciphers/fixture "))
+                );
+                let mut len = 0;
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line
+                        .to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                    {
+                        len = value.trim().parse::<usize>().unwrap();
+                    }
+                }
+                let mut body = vec![0; len];
+                reader.read_exact(&mut body).unwrap();
+                if method == "PUT" {
+                    let value: serde_json::Value =
+                        serde_json::from_slice(&body).unwrap();
+                    assert_eq!(value["login"]["password"], "encrypted-new");
+                    assert_eq!(
+                        value["login"]["fido2Credentials"],
+                        original["login"]["fido2Credentials"]
+                    );
+                    assert_eq!(value["favorite"], true);
+                    assert_eq!(value["reprompt"], 1);
+                    assert_eq!(
+                        value["lastKnownRevisionDate"],
+                        original["revisionDate"]
+                    );
+                    assert_eq!(
+                        value["attachments2"]["attachment"]["key"],
+                        "encrypted-key"
+                    );
+                }
+                let body = if method == "GET" {
+                    original.to_string()
+                } else {
+                    "{}".into()
+                };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            }
+        });
+        let client = Client::new(&format!("http://{address}"), "", "", None);
+        let mut patch = crate::mutation::Patch::default();
+        patch.change(
+            "/login/password",
+            serde_json::json!("encrypted-old"),
+            serde_json::json!("encrypted-new"),
+        );
+        client
+            .patch_cipher("fixture-token", "fixture", &patch)
+            .unwrap();
+        server.join().unwrap();
+    }
 }

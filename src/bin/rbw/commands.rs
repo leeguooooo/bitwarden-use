@@ -1,4 +1,8 @@
-use std::{fmt::Write as _, io::Write as _};
+mod read;
+pub use read::domain_login;
+mod write;
+use std::io::Write as _;
+pub use write::{edit, set, SetFields, WriteOptions};
 
 use anyhow::Context as _;
 
@@ -688,172 +692,6 @@ impl DecryptedCipher {
         }
     }
 
-    fn display_long(&self, desc: &str, clipboard: bool) {
-        match &self.data {
-            DecryptedData::Login {
-                username,
-                totp,
-                uris,
-                ..
-            } => {
-                let mut displayed = self.display_short(desc, clipboard);
-                displayed |=
-                    display_field("Username", username.as_deref(), clipboard);
-                displayed |=
-                    display_field("TOTP Secret", totp.as_deref(), clipboard);
-
-                if let Some(uris) = uris {
-                    for uri in uris {
-                        displayed |=
-                            display_field("URI", Some(&uri.uri), clipboard);
-                        let match_type =
-                            uri.match_type.map(|ty| format!("{ty}"));
-                        displayed |= display_field(
-                            "Match type",
-                            match_type.as_deref(),
-                            clipboard,
-                        );
-                    }
-                }
-
-                for field in &self.fields {
-                    displayed |= display_field(
-                        field.name.as_deref().unwrap_or("(null)"),
-                        Some(field.value.as_deref().unwrap_or("")),
-                        clipboard,
-                    );
-                }
-
-                if let Some(notes) = &self.notes {
-                    if displayed {
-                        println!();
-                    }
-                    println!("{notes}");
-                }
-            }
-            DecryptedData::Card {
-                cardholder_name,
-                brand,
-                exp_month,
-                exp_year,
-                code,
-                ..
-            } => {
-                let mut displayed = false;
-
-                displayed |= self.display_short(desc, clipboard);
-                if let (Some(exp_month), Some(exp_year)) =
-                    (exp_month, exp_year)
-                {
-                    println!("Expiration: {exp_month}/{exp_year}");
-                    displayed = true;
-                }
-                displayed |= display_field("CVV", code.as_deref(), clipboard);
-                displayed |= display_field(
-                    "Name",
-                    cardholder_name.as_deref(),
-                    clipboard,
-                );
-                displayed |=
-                    display_field("Brand", brand.as_deref(), clipboard);
-
-                if let Some(notes) = &self.notes {
-                    if displayed {
-                        println!();
-                    }
-                    println!("{notes}");
-                }
-            }
-            DecryptedData::Identity {
-                address1,
-                address2,
-                address3,
-                city,
-                state,
-                postal_code,
-                country,
-                phone,
-                email,
-                ssn,
-                license_number,
-                passport_number,
-                username,
-                ..
-            } => {
-                let mut displayed = self.display_short(desc, clipboard);
-
-                displayed |=
-                    display_field("Address", address1.as_deref(), clipboard);
-                displayed |=
-                    display_field("Address", address2.as_deref(), clipboard);
-                displayed |=
-                    display_field("Address", address3.as_deref(), clipboard);
-                displayed |=
-                    display_field("City", city.as_deref(), clipboard);
-                displayed |=
-                    display_field("State", state.as_deref(), clipboard);
-                displayed |= display_field(
-                    "Postcode",
-                    postal_code.as_deref(),
-                    clipboard,
-                );
-                displayed |=
-                    display_field("Country", country.as_deref(), clipboard);
-                displayed |=
-                    display_field("Phone", phone.as_deref(), clipboard);
-                displayed |=
-                    display_field("Email", email.as_deref(), clipboard);
-                displayed |= display_field("SSN", ssn.as_deref(), clipboard);
-                displayed |= display_field(
-                    "License",
-                    license_number.as_deref(),
-                    clipboard,
-                );
-                displayed |= display_field(
-                    "Passport",
-                    passport_number.as_deref(),
-                    clipboard,
-                );
-                displayed |=
-                    display_field("Username", username.as_deref(), clipboard);
-
-                if let Some(notes) = &self.notes {
-                    if displayed {
-                        println!();
-                    }
-                    println!("{notes}");
-                }
-            }
-            DecryptedData::SecureNote => {
-                self.display_short(desc, clipboard);
-            }
-            DecryptedData::SshKey { fingerprint, .. } => {
-                let mut displayed = self.display_short(desc, clipboard);
-                displayed |= display_field(
-                    "Fingerprint",
-                    fingerprint.as_deref(),
-                    clipboard,
-                );
-
-                for field in &self.fields {
-                    displayed |= display_field(
-                        field.name.as_deref().unwrap_or("(null)"),
-                        Some(field.value.as_deref().unwrap_or("")),
-                        clipboard,
-                    );
-                }
-
-                if let Some(notes) = &self.notes {
-                    if displayed {
-                        println!();
-                    }
-                    println!("{notes}");
-                }
-            }
-        }
-    }
-
-    /// This implementation mirror the `fn display_fied` method on which field to list
     fn display_fields_list(&self) {
         match &self.data {
             DecryptedData::Login {
@@ -992,14 +830,6 @@ impl DecryptedCipher {
                 println!("{name}");
             }
         }
-    }
-
-    fn display_json(&self, desc: &str) -> anyhow::Result<()> {
-        serde_json::to_writer_pretty(std::io::stdout(), &self)
-            .context(format!("failed to write entry '{desc}' to stdout"))?;
-        println!();
-
-        Ok(())
     }
 }
 
@@ -1394,6 +1224,8 @@ pub fn get(
     clipboard: bool,
     ignore_case: bool,
     list_fields: bool,
+    reveal: bool,
+    codes: bool,
 ) -> anyhow::Result<()> {
     unlock()?;
 
@@ -1408,19 +1240,16 @@ pub fn get(
     let (_, decrypted) =
         find_entry(&db, needle, user, folder, ignore_case)
             .with_context(|| format!("couldn't find entry for '{desc}'"))?;
-    if list_fields {
-        decrypted.display_fields_list();
-    } else if raw {
-        decrypted.display_json(&desc)?;
-    } else if full {
-        decrypted.display_long(&desc, clipboard);
-    } else if let Some(field) = field {
-        decrypted.display_field(&desc, field, clipboard);
-    } else {
-        decrypted.display_short(&desc, clipboard);
-    }
-
-    Ok(())
+    read::display(
+        &decrypted,
+        field,
+        full,
+        raw,
+        clipboard,
+        list_fields,
+        reveal,
+        codes,
+    )
 }
 
 pub fn fido2_list() -> anyhow::Result<()> {
@@ -1581,7 +1410,8 @@ fn display_fido2_credential(
     entry: &rbw::db::Entry,
 ) -> anyhow::Result<()> {
     // every fido2 field is an EncString in the vault — decrypt them all
-    let credential_id = decrypt_fido2_field(cred.credential_id.as_deref(), entry);
+    let credential_id =
+        decrypt_fido2_field(cred.credential_id.as_deref(), entry);
     let rp_id = decrypt_fido2_field(cred.rp_id.as_deref(), entry);
     let user_handle = decrypt_fido2_field(cred.user_handle.as_deref(), entry);
     let key_type = decrypt_fido2_field(cred.key_type.as_deref(), entry);
@@ -1681,10 +1511,13 @@ pub fn fido2_assert(
     let cred = fido2_credentials
         .iter()
         .find(|cred| {
-            decrypt_fido2_field(cred.credential_id.as_deref(), &entry).as_deref()
+            decrypt_fido2_field(cred.credential_id.as_deref(), &entry)
+                .as_deref()
                 == Some(needle_str.as_str())
         })
-        .or_else(|| (fido2_credentials.len() == 1).then(|| &fido2_credentials[0]))
+        .or_else(|| {
+            (fido2_credentials.len() == 1).then(|| &fido2_credentials[0])
+        })
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "'{}' has {} passkeys; name one by its credentialId",
@@ -1694,16 +1527,25 @@ pub fn fido2_assert(
         })?;
 
     let credential_id =
-        decrypt_fido2_field(cred.credential_id.as_deref(), &entry).unwrap_or_default();
-    let stored_rp_id = decrypt_fido2_field(cred.rp_id.as_deref(), &entry).unwrap_or_default();
-    let user_handle = decrypt_fido2_field(cred.user_handle.as_deref(), &entry).unwrap_or_default();
-    let key_type = decrypt_fido2_field(cred.key_type.as_deref(), &entry).unwrap_or_default();
-    let key_curve = decrypt_fido2_field(cred.key_curve.as_deref(), &entry).unwrap_or_default();
+        decrypt_fido2_field(cred.credential_id.as_deref(), &entry)
+            .unwrap_or_default();
+    let stored_rp_id = decrypt_fido2_field(cred.rp_id.as_deref(), &entry)
+        .unwrap_or_default();
+    let user_handle =
+        decrypt_fido2_field(cred.user_handle.as_deref(), &entry)
+            .unwrap_or_default();
+    let key_type = decrypt_fido2_field(cred.key_type.as_deref(), &entry)
+        .unwrap_or_default();
+    let key_curve = decrypt_fido2_field(cred.key_curve.as_deref(), &entry)
+        .unwrap_or_default();
     let key_value = decrypt_fido2_field(cred.key_value.as_deref(), &entry)
-        .ok_or_else(|| anyhow::anyhow!("passkey has no decryptable private key"))?;
-    let stored_counter: u32 = decrypt_fido2_field(cred.counter.as_deref(), &entry)
-        .and_then(|c| c.trim().parse().ok())
-        .unwrap_or(0);
+        .ok_or_else(|| {
+            anyhow::anyhow!("passkey has no decryptable private key")
+        })?;
+    let stored_counter: u32 =
+        decrypt_fido2_field(cred.counter.as_deref(), &entry)
+            .and_then(|c| c.trim().parse().ok())
+            .unwrap_or(0);
 
     if key_type != "public-key" || key_curve != "P-256" {
         return Err(anyhow::anyhow!(
@@ -1712,9 +1554,13 @@ pub fn fido2_assert(
     }
     let rp_id = rp_id_override.unwrap_or(&stored_rp_id);
     if rp_id.is_empty() {
-        return Err(anyhow::anyhow!("no rpId stored on this passkey; pass --rp-id"));
+        return Err(anyhow::anyhow!(
+            "no rpId stored on this passkey; pass --rp-id"
+        ));
     }
-    if rp_id_override.is_some_and(|r| r != stored_rp_id) && !stored_rp_id.is_empty() {
+    if rp_id_override.is_some_and(|r| r != stored_rp_id)
+        && !stored_rp_id.is_empty()
+    {
         return Err(anyhow::anyhow!(
             "--rp-id {rp_id:?} does not match the passkey's rpId {stored_rp_id:?}; refusing to sign for a different relying party"
         ));
@@ -1746,7 +1592,12 @@ pub fn fido2_assert(
 /// UP (0x01) is always set for an assertion this command produces; UV (0x04)
 /// only when the caller vouches for it. No attested credential data, no
 /// extensions.
-fn build_authenticator_data(rp_id: &str, up: bool, uv: bool, counter: u32) -> Vec<u8> {
+fn build_authenticator_data(
+    rp_id: &str,
+    up: bool,
+    uv: bool,
+    counter: u32,
+) -> Vec<u8> {
     use sha2::Digest as _;
     let mut out = Vec::with_capacity(37);
     out.extend_from_slice(&sha2::Sha256::digest(rp_id.as_bytes()));
@@ -1770,9 +1621,12 @@ fn sign_assertion(
 ) -> anyhow::Result<Vec<u8>> {
     use p256::pkcs8::DecodePrivateKey as _;
     use signature::Signer as _;
-    let key = p256::ecdsa::SigningKey::from_pkcs8_der(pkcs8_der)
-        .map_err(|e| anyhow::anyhow!("private key is not a PKCS#8 P-256 key: {e}"))?;
-    let mut message = Vec::with_capacity(auth_data.len() + client_data_hash.len());
+    let key =
+        p256::ecdsa::SigningKey::from_pkcs8_der(pkcs8_der).map_err(|e| {
+            anyhow::anyhow!("private key is not a PKCS#8 P-256 key: {e}")
+        })?;
+    let mut message =
+        Vec::with_capacity(auth_data.len() + client_data_hash.len());
     message.extend_from_slice(auth_data);
     message.extend_from_slice(client_data_hash);
     let sig: p256::ecdsa::Signature = key.sign(&message);
@@ -1784,9 +1638,15 @@ fn decode_key_value(key_value_b64url: &str) -> anyhow::Result<Vec<u8>> {
     let trimmed = key_value_b64url.trim();
     base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(trimmed)
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(trimmed))
-        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(trimmed))
-        .or_else(|_| base64::engine::general_purpose::STANDARD.decode(trimmed))
+        .or_else(|_| {
+            base64::engine::general_purpose::URL_SAFE.decode(trimmed)
+        })
+        .or_else(|_| {
+            base64::engine::general_purpose::STANDARD_NO_PAD.decode(trimmed)
+        })
+        .or_else(|_| {
+            base64::engine::general_purpose::STANDARD.decode(trimmed)
+        })
         .context("not base64")
 }
 
@@ -1794,7 +1654,9 @@ fn decode_key_value(key_value_b64url: &str) -> anyhow::Result<Vec<u8>> {
 fn decode_32_bytes(input: &str) -> anyhow::Result<[u8; 32]> {
     use base64::Engine as _;
     let s = input.trim();
-    let bytes: Vec<u8> = if s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+    let bytes: Vec<u8> = if s.len() == 64
+        && s.bytes().all(|b| b.is_ascii_hexdigit())
+    {
         (0..64)
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
@@ -1806,16 +1668,19 @@ fn decode_32_bytes(input: &str) -> anyhow::Result<[u8; 32]> {
             .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(s))
             .context("neither 64 hex chars nor base64url")?
     };
-    <[u8; 32]>::try_from(bytes.as_slice())
-        .map_err(|_| anyhow::anyhow!("expected 32 bytes, got {}", bytes.len()))
+    <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
+        anyhow::anyhow!("expected 32 bytes, got {}", bytes.len())
+    })
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 // The decrypted KeyValue is a base64url-encoded PKCS#8 private key. Decode it
@@ -1985,7 +1850,9 @@ pub fn add(
     username: Option<&str>,
     uris: &[(String, Option<rbw::api::UriMatchType>)],
     folder: Option<&str>,
+    options: &WriteOptions,
 ) -> anyhow::Result<()> {
+    let input = rbw::edit::read_stdin(options.allow_empty)?;
     unlock()?;
 
     let mut db = load_db()?;
@@ -2000,9 +1867,22 @@ pub fn add(
         .map(|username| crate::actions::encrypt(username, None))
         .transpose()?;
 
-    let contents = rbw::edit::edit("", HELP_PW)?;
+    let contents = match input {
+        Some(input) => input,
+        None => {
+            rbw::edit::edit_with_options("", HELP_PW, options.allow_empty)?
+        }
+    };
 
     let (password, notes) = parse_editor(&contents);
+    options.nonempty("password", password.as_deref().unwrap_or(""))?;
+    if !options.confirm(&[
+        ("new login/password".into(), false, password.is_some()),
+        ("notes".into(), false, notes.is_some()),
+        ("uris".into(), false, !uris.is_empty()),
+    ])? {
+        return Ok(());
+    }
     let password = password
         .map(|password| crate::actions::encrypt(&password, None))
         .transpose()?;
@@ -2087,11 +1967,18 @@ pub fn generate(
     folder: Option<&str>,
     len: usize,
     ty: rbw::pwgen::Type,
+    options: &WriteOptions,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(len > 0, "password length must be greater than zero");
     let password = rbw::pwgen::pwgen(ty, len);
-    println!("{password}");
+    if name.is_none() {
+        println!("{password}");
+    }
 
     if let Some(name) = name {
+        if !options.confirm(&[("new login/password".into(), false, true)])? {
+            return Ok(());
+        }
         unlock()?;
 
         let mut db = load_db()?;
@@ -2177,317 +2064,12 @@ pub fn generate(
     Ok(())
 }
 
-pub fn edit(
-    name: Needle,
-    username: Option<&str>,
-    folder: Option<&str>,
-    ignore_case: bool,
-) -> anyhow::Result<()> {
-    unlock()?;
-
-    let mut db = load_db()?;
-    let access_token = db.access_token.as_ref().unwrap();
-    let refresh_token = db.refresh_token.as_ref().unwrap();
-
-    let desc = format!(
-        "{}{}",
-        username.map_or_else(String::new, |s| format!("{s}@")),
-        name
-    );
-
-    let (entry, decrypted) =
-        find_entry(&db, name, username, folder, ignore_case)
-            .with_context(|| format!("couldn't find entry for '{desc}'"))?;
-
-    let (data, fields, notes, history) = match &decrypted.data {
-        DecryptedData::Login { password, .. } => {
-            let mut contents =
-                format!("{}\n", password.as_deref().unwrap_or(""));
-            if let Some(notes) = decrypted.notes {
-                write!(contents, "\n{notes}\n").unwrap();
-            }
-
-            let contents = rbw::edit::edit(&contents, HELP_PW)?;
-
-            let (password, notes) = parse_editor(&contents);
-            let password = password
-                .map(|password| {
-                    crate::actions::encrypt(
-                        &password,
-                        entry.org_id.as_deref(),
-                    )
-                })
-                .transpose()?;
-            let notes = notes
-                .map(|notes| {
-                    crate::actions::encrypt(&notes, entry.org_id.as_deref())
-                })
-                .transpose()?;
-            let mut history = entry.history.clone();
-            let rbw::db::EntryData::Login {
-                username: entry_username,
-                password: entry_password,
-                uris: entry_uris,
-                totp: entry_totp,
-                fido2_credentials: entry_fido2_credentials,
-            } = &entry.data
-            else {
-                unreachable!();
-            };
-
-            if let Some(prev_password) = entry_password.clone() {
-                let new_history_entry = rbw::db::HistoryEntry {
-                    last_used_date: format!(
-                        "{}",
-                        humantime::format_rfc3339(
-                            std::time::SystemTime::now()
-                        )
-                    ),
-                    password: prev_password,
-                };
-                history.insert(0, new_history_entry);
-            }
-
-            let data = rbw::db::EntryData::Login {
-                username: entry_username.clone(),
-                password,
-                uris: entry_uris.clone(),
-                totp: entry_totp.clone(),
-                fido2_credentials: entry_fido2_credentials.clone(),
-            };
-            (data, entry.fields, notes, history)
-        }
-        DecryptedData::SecureNote => {
-            let data = rbw::db::EntryData::SecureNote {};
-
-            let editor_content = decrypted.notes.map_or_else(
-                || "\n".to_string(),
-                |notes| format!("{notes}\n"),
-            );
-            let contents = rbw::edit::edit(&editor_content, HELP_NOTES)?;
-
-            // prepend blank line to be parsed as pw by `parse_editor`
-            let (_, notes) = parse_editor(&format!("\n{contents}\n"));
-
-            let notes = notes
-                .map(|notes| {
-                    crate::actions::encrypt(&notes, entry.org_id.as_deref())
-                })
-                .transpose()?;
-
-            (data, entry.fields, notes, entry.history)
-        }
-        _ => {
-            return Err(anyhow::anyhow!(
-                "modifications are only supported for login and note entries"
-            ));
-        }
-    };
-
-    if let (Some(access_token), ()) = rbw::actions::edit(
-        access_token,
-        refresh_token,
-        &entry.id,
-        entry.org_id.as_deref(),
-        &entry.name,
-        &data,
-        &fields,
-        notes.as_deref(),
-        entry.folder_id.as_deref(),
-        &history,
-    )? {
-        db.access_token = Some(access_token);
-        save_db(&db)?;
-    }
-
-    crate::actions::sync()?;
-    Ok(())
-}
-
-/// Fields `set` may replace. `None` = leave alone; `Some("")` = clear.
-/// `uris` empty = leave alone (an explicit clear is not offered: a login with
-/// no URI is a login the browser integration can never match).
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct SetFields {
-    pub totp: Option<String>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub uris: Vec<String>,
-    pub notes: Option<String>,
-}
-
-impl SetFields {
-    /// Which fields this call touches, in display order. Empty means the call
-    /// would be a no-op — and a no-op write to a vault is refused, not applied.
-    fn touched(&self) -> Vec<&'static str> {
-        let mut out = Vec::new();
-        if self.totp.is_some() {
-            out.push("totp");
-        }
-        if self.username.is_some() {
-            out.push("username");
-        }
-        if self.password.is_some() {
-            out.push("password");
-        }
-        if !self.uris.is_empty() {
-            out.push("uris");
-        }
-        if self.notes.is_some() {
-            out.push("notes");
-        }
-        out
-    }
-}
-
-/// `set`: field-level update of a login (#2). `edit`'s editor round-trip
-/// ("first line password, rest notes") cannot express a TOTP seed, so every
-/// entry created from the CLI was stuck with `code` failing on "entry does not
-/// contain a totp secret". This writes exactly the named fields through the
-/// same encrypt + `actions::edit` path `edit` uses, and reports what changed.
-pub fn set(
-    name: Needle,
-    user: Option<&str>,
-    folder: Option<&str>,
-    ignore_case: bool,
-    fields: SetFields,
-) -> anyhow::Result<()> {
-    let touched = fields.touched();
-    if touched.is_empty() {
-        return Err(anyhow::anyhow!(
-            "nothing to set: pass at least one of --totp, --username, --password, --uri, --notes"
-        ));
-    }
-
-    unlock()?;
-
-    let mut db = load_db()?;
-    let access_token = db.access_token.as_ref().unwrap();
-    let refresh_token = db.refresh_token.as_ref().unwrap();
-
-    let desc = format!(
-        "{}{}",
-        user.map_or_else(String::new, |s| format!("{s}@")),
-        name
-    );
-
-    let (entry, decrypted) = find_entry(&db, name, user, folder, ignore_case)
-        .with_context(|| format!("couldn't find entry for '{desc}'"))?;
-
-    let rbw::db::EntryData::Login {
-        username: entry_username,
-        password: entry_password,
-        uris: entry_uris,
-        totp: entry_totp,
-        fido2_credentials: entry_fido2_credentials,
-    } = &entry.data
-    else {
-        return Err(anyhow::anyhow!(
-            "set is only supported for login entries ('{desc}' is not one)"
-        ));
-    };
-    let org_id = entry.org_id.as_deref();
-
-    // "" clears; anything else is encrypted in place of the stored value.
-    let replace = |new: &Option<String>,
-                   current: &Option<String>|
-     -> anyhow::Result<Option<String>> {
-        match new.as_deref() {
-            None => Ok(current.clone()),
-            Some("") => Ok(None),
-            Some(v) => Ok(Some(crate::actions::encrypt(v, org_id)?)),
-        }
-    };
-
-    let mut history = entry.history.clone();
-    let password = match fields.password.as_deref() {
-        None => entry_password.clone(),
-        Some(v) => {
-            // Same bookkeeping as `edit`: the previous password goes to history.
-            if let Some(prev) = entry_password.clone() {
-                history.insert(
-                    0,
-                    rbw::db::HistoryEntry {
-                        last_used_date: format!(
-                            "{}",
-                            humantime::format_rfc3339(std::time::SystemTime::now())
-                        ),
-                        password: prev,
-                    },
-                );
-            }
-            if v.is_empty() {
-                None
-            } else {
-                Some(crate::actions::encrypt(v, org_id)?)
-            }
-        }
-    };
-    let uris = if fields.uris.is_empty() {
-        entry_uris.clone()
-    } else {
-        fields
-            .uris
-            .iter()
-            .map(|u| {
-                Ok(rbw::db::Uri {
-                    uri: crate::actions::encrypt(u, org_id)?,
-                    match_type: None,
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?
-    };
-    let notes = match fields.notes.as_deref() {
-        None => decrypted
-            .notes
-            .as_deref()
-            .map(|n| crate::actions::encrypt(n, org_id))
-            .transpose()?,
-        Some("") => None,
-        Some(v) => Some(crate::actions::encrypt(v, org_id)?),
-    };
-
-    let data = rbw::db::EntryData::Login {
-        username: replace(&fields.username, entry_username)?,
-        password,
-        uris,
-        totp: replace(&fields.totp, entry_totp)?,
-        fido2_credentials: entry_fido2_credentials.clone(),
-    };
-
-    if let (Some(access_token), ()) = rbw::actions::edit(
-        access_token,
-        refresh_token,
-        &entry.id,
-        org_id,
-        &entry.name,
-        &data,
-        &entry.fields,
-        notes.as_deref(),
-        entry.folder_id.as_deref(),
-        &history,
-    )? {
-        db.access_token = Some(access_token);
-        save_db(&db)?;
-    }
-
-    crate::actions::sync()?;
-
-    // The diff-style receipt #2 asked for: what moved, what did not.
-    let all = ["totp", "username", "password", "uris", "notes"];
-    let unchanged: Vec<&str> = all.iter().copied().filter(|f| !touched.contains(f)).collect();
-    println!("{}: set {}", entry.name, touched.join(", "));
-    if !unchanged.is_empty() {
-        println!("unchanged: {}", unchanged.join(", "));
-    }
-    Ok(())
-}
-
 pub fn remove(
     name: Needle,
     username: Option<&str>,
     folder: Option<&str>,
     ignore_case: bool,
+    options: &WriteOptions,
 ) -> anyhow::Result<()> {
     unlock()?;
 
@@ -2504,6 +2086,9 @@ pub fn remove(
     let (entry, _) = find_entry(&db, name, username, folder, ignore_case)
         .with_context(|| format!("couldn't find entry for '{desc}'"))?;
 
+    if !options.confirm(&[("delete entry".into(), true, false)])? {
+        return Ok(());
+    }
     if let (Some(access_token), ()) =
         rbw::actions::remove(access_token, refresh_token, &entry.id)?
     {
@@ -2574,25 +2159,24 @@ fn ensure_agent() -> anyhow::Result<()> {
 
 fn run_agent() -> anyhow::Result<()> {
     // RBW_AGENT env var name is kept for backwards compatibility with rbw.
-    let agent_path: std::ffi::OsString =
-        if let Some(path) = std::env::var_os("RBW_AGENT") {
-            path
-        } else {
-            // prefer the agent binary sitting next to this executable so a
-            // self-contained install works without bitwarden-use-agent on PATH;
-            // otherwise fall back to a bare name and let PATH resolve it.
-            std::env::current_exe()
-                .ok()
-                .and_then(|exe| {
-                    exe.parent().map(std::path::Path::to_path_buf)
-                })
-                .map(|dir| dir.join("bitwarden-use-agent"))
-                .filter(|p| p.exists())
-                .map_or_else(
-                    || std::ffi::OsString::from("bitwarden-use-agent"),
-                    std::path::PathBuf::into_os_string,
-                )
-        };
+    let agent_path: std::ffi::OsString = if let Some(path) =
+        std::env::var_os("RBW_AGENT")
+    {
+        path
+    } else {
+        // prefer the agent binary sitting next to this executable so a
+        // self-contained install works without bitwarden-use-agent on PATH;
+        // otherwise fall back to a bare name and let PATH resolve it.
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+            .map(|dir| dir.join("bitwarden-use-agent"))
+            .filter(|p| p.exists())
+            .map_or_else(
+                || std::ffi::OsString::from("bitwarden-use-agent"),
+                std::path::PathBuf::into_os_string,
+            )
+    };
     let status = std::process::Command::new(&agent_path)
         .status()
         .context("failed to run bitwarden-use-agent")?;
@@ -3371,7 +2955,8 @@ fn parse_totp_secret(secret: &str) -> anyhow::Result<TotpParams> {
                 })
             }
             "steam" => {
-                let steam_secret = u.host_str().unwrap();
+                let steam_secret =
+                    u.host_str().context("missing Steam secret")?;
 
                 Ok(TotpParams {
                     secret: decode_totp_secret(steam_secret)?,
@@ -3410,6 +2995,16 @@ fn generate_totp_algorithm_type(
 
 fn generate_totp(secret: &str) -> anyhow::Result<String> {
     let totp_params = parse_totp_secret(secret)?;
+    let valid_digits = if totp_params.algorithm == "STEAM" {
+        totp_params.digits == 5
+    } else {
+        (6..=8).contains(&totp_params.digits)
+    };
+    anyhow::ensure!(
+        totp_params.period > 0 && valid_digits,
+        "invalid TOTP period or digits"
+    );
+    anyhow::ensure!(!totp_params.secret.is_empty(), "empty TOTP secret");
     let alg = totp_params.algorithm.as_str();
 
     match alg {
@@ -3427,13 +3022,6 @@ fn generate_totp(secret: &str) -> anyhow::Result<String> {
             "{alg} is not a valid totp algorithm"
         ))),
     }
-}
-
-fn display_field(name: &str, field: Option<&str>, clipboard: bool) -> bool {
-    field.map_or_else(
-        || false,
-        |field| val_display_or_store(clipboard, &format!("{name}: {field}")),
-    )
 }
 
 #[cfg(test)]
@@ -4812,7 +4400,10 @@ mod fido2_assert_tests {
         let ad = build_authenticator_data("example.com", true, false, 7);
         assert_eq!(ad.len(), 37);
         use sha2::Digest as _;
-        assert_eq!(&ad[..32], sha2::Sha256::digest(b"example.com").as_slice());
+        assert_eq!(
+            &ad[..32],
+            sha2::Sha256::digest(b"example.com").as_slice()
+        );
         assert_eq!(ad[32], 0x01, "UP only");
         assert_eq!(&ad[33..], &7u32.to_be_bytes());
         let ad_uv = build_authenticator_data("example.com", true, true, 0);
@@ -4845,9 +4436,16 @@ mod fido2_assert_tests {
         let hex = "ab".repeat(32);
         assert_eq!(decode_32_bytes(&hex).unwrap(), [0xabu8; 32]);
         use base64::Engine as _;
-        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x01u8; 32]);
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode([0x01u8; 32]);
         assert_eq!(decode_32_bytes(&b64).unwrap(), [0x01u8; 32]);
         assert!(decode_32_bytes("abcd").is_err());
         assert!(decode_32_bytes(&"ab".repeat(31)).is_err());
     }
+}
+
+pub fn unlock_keychain(store: bool) -> anyhow::Result<()> {
+    anyhow::ensure!(cfg!(target_os = "macos"), "--keychain requires macOS");
+    ensure_agent()?;
+    crate::actions::unlock_keychain(store)
 }

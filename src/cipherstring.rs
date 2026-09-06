@@ -313,3 +313,57 @@ fn test_pkcs7_unpad() {
         assert_eq!(got, expected);
     }
 }
+
+/// Encrypt a field using its per-item key when present, otherwise the account/org key.
+pub fn encrypt_for_entry(
+    keys: &crate::locked::Keys,
+    entry_key: Option<&str>,
+    plaintext: &[u8],
+) -> Result<CipherString> {
+    let item_keys = entry_key
+        .map(|key| {
+            let mut bytes =
+                CipherString::new(key)?.decrypt_locked_symmetric(keys)?;
+            // This legacy helper retains the PKCS#7 tail for private-key callers.
+            let len = pkcs7_unpad(bytes.data()).ok_or(Error::Padding)?.len();
+            if len != 64 {
+                return Err(Error::UnsafeWrite {
+                    message: "invalid item encryption key length".into(),
+                });
+            }
+            bytes.truncate(len);
+            Ok(crate::locked::Keys::new(bytes))
+        })
+        .transpose()?;
+    CipherString::encrypt_symmetric(
+        item_keys.as_ref().unwrap_or(keys),
+        plaintext,
+    )
+}
+
+#[test]
+fn item_key_encrypt_roundtrip() {
+    let mut master_bytes = crate::locked::Vec::new();
+    master_bytes.extend(std::iter::repeat_n(7, 64));
+    let master = crate::locked::Keys::new(master_bytes);
+    let mut item_bytes = crate::locked::Vec::new();
+    item_bytes.extend(std::iter::repeat_n(9, 64));
+    let wrapped = CipherString::encrypt_symmetric(&master, item_bytes.data())
+        .unwrap()
+        .to_string();
+    let item = crate::locked::Keys::new(item_bytes);
+    let cipher =
+        encrypt_for_entry(&master, Some(&wrapped), b"test-value").unwrap();
+    assert_eq!(
+        cipher.decrypt_symmetric(&master, Some(&item)).unwrap(),
+        b"test-value"
+    );
+    assert!(cipher.decrypt_symmetric(&master, None).is_err());
+    let short = CipherString::encrypt_symmetric(&master, &[9; 32])
+        .unwrap()
+        .to_string();
+    assert!(encrypt_for_entry(&master, Some(&short), b"test-value").is_err());
+    assert!(
+        encrypt_for_entry(&master, Some("malformed"), b"test-value").is_err()
+    );
+}

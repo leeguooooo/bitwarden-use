@@ -3,7 +3,7 @@
 # Release (no npm, no token). Usage:
 #   curl -fsSL https://raw.githubusercontent.com/leeguooooo/bitwarden-use/main/install.sh | sh
 # Override install dir:  BITWARDEN_INSTALL_DIR=/usr/local/bin sh install.sh
-# Pin a version:         BITWARDEN_VERSION=v1.15.0 sh install.sh
+# Pin a version:         BITWARDEN_VERSION=v0.2.0 sh install.sh
 set -eu
 
 REPO="leeguooooo/bitwarden-use"
@@ -38,22 +38,33 @@ trap 'rm -rf "$tmp"' EXIT
 printf 'install: downloading %s\n' "$url" >&2
 curl -fsSL "$url" -o "$tmp/$asset" || err "download failed ($url)"
 
-# verify checksum if the .sha256 is published alongside
-if curl -fsSL "$url.sha256" -o "$tmp/$asset.sha256" 2>/dev/null; then
-  want="$(awk '{print $1}' "$tmp/$asset.sha256")"
-  if command -v sha256sum >/dev/null 2>&1; then
-    got="$(sha256sum "$tmp/$asset" | awk '{print $1}')"
-  else
-    got="$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')"
-  fi
-  [ "$want" = "$got" ] || err "checksum mismatch (want $want, got $got)"
-  printf 'install: checksum ok\n' >&2
+# A missing checksum is a failed install, never permission to skip verification.
+curl -fsSL "$url.sha256" -o "$tmp/$asset.sha256" || err "checksum download failed"
+want="$(awk 'NR == 1 {print $1}' "$tmp/$asset.sha256")"
+[ "${#want}" -eq 64 ] || err "invalid checksum file"
+case "$want" in *[!0-9a-fA-F]*) err "invalid checksum file" ;; esac
+if command -v sha256sum >/dev/null 2>&1; then
+  got="$(sha256sum "$tmp/$asset" | awk '{print $1}')"
+else
+  got="$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')"
 fi
+[ "$want" = "$got" ] || err "checksum mismatch"
+printf 'install: checksum ok\n' >&2
 
 tar xzf "$tmp/$asset" -C "$tmp"
 mkdir -p "$INSTALL_DIR"
-install -m 0755 "$tmp/$BIN-$target/$BIN" "$INSTALL_DIR/$BIN"
-install -m 0755 "$tmp/$BIN-$target/$AGENT" "$INSTALL_DIR/$AGENT"
+# Validate the entire pair before replacing either executable. Rename avoids
+# modifying an executable inode that another process is currently running.
+[ -f "$tmp/$BIN-$target/$BIN" ] && [ ! -L "$tmp/$BIN-$target/$BIN" ] || err "CLI missing from archive"
+[ -f "$tmp/$BIN-$target/$AGENT" ] && [ ! -L "$tmp/$BIN-$target/$AGENT" ] || err "agent missing from archive"
+"$tmp/$BIN-$target/$BIN" --version >/dev/null || err "downloaded CLI cannot run"
+"$tmp/$BIN-$target/$BIN" set --help >/dev/null || err "downloaded CLI lacks field updates"
+stage="$(mktemp -d "$INSTALL_DIR/.bwu-install.XXXXXX")"
+trap 'rm -rf "$tmp" "$stage"' EXIT
+install -m 0755 "$tmp/$BIN-$target/$BIN" "$stage/$BIN"
+install -m 0755 "$tmp/$BIN-$target/$AGENT" "$stage/$AGENT"
+mv -f "$stage/$AGENT" "$INSTALL_DIR/$AGENT"
+mv -f "$stage/$BIN" "$INSTALL_DIR/$BIN"
 # short alias `bwu` -> bitwarden-use (typing the full name gets old)
 ln -sf "$BIN" "$INSTALL_DIR/bwu"
 

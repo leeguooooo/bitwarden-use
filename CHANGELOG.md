@@ -1,3 +1,15 @@
+# 0.2.0
+
+- Add URI replacement/addition/removal with matching modes and exact custom-field updates.
+- Require explicit empty-value permission and show masked previews before writes.
+- Preserve untouched server metadata, passkeys, attachments and item encryption keys; reject stale updates.
+- Mask get/JSON output by default; add --reveal, --json and standalone recovery-code extraction.
+- Add unique domain credential selection with exact name/user disambiguation and Public Suffix List matching.
+- Add verified macOS login Keychain enrollment and explicit Keychain unlock.
+- Require installer checksums, preserve running executable inodes and publish complete four-platform releases.
+
+Breaking changes: get requires --reveal for plaintext; writes require confirmation/--yes; custom-field reads require exact names.
+
 # Changelog
 
 ## [1.15.0] - 2025-12-31

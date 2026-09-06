@@ -127,6 +127,16 @@ async fn handle_request(
             crate::actions::login(sock, state.clone(), &environment).await?;
             true
         }
+        rbw::protocol::Action::UnlockKeychain { store } => {
+            crate::actions::unlock_keychain(
+                sock,
+                state.clone(),
+                &environment,
+                *store,
+            )
+            .await?;
+            true
+        }
         rbw::protocol::Action::Unlock => {
             crate::actions::unlock(sock, state.clone(), &environment).await?;
             true
@@ -162,11 +172,16 @@ async fn handle_request(
             .await?;
             true
         }
-        rbw::protocol::Action::Encrypt { plaintext, org_id } => {
+        rbw::protocol::Action::Encrypt {
+            plaintext,
+            entry_key,
+            org_id,
+        } => {
             crate::actions::encrypt(
                 sock,
                 state.clone(),
                 plaintext,
+                entry_key.as_deref(),
                 org_id.as_deref(),
             )
             .await?;

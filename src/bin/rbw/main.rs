@@ -44,10 +44,25 @@ enum Opt {
     Register,
 
     #[command(about = "Log in to the Bitwarden server")]
-    Login,
+    Login {
+        #[arg(long)]
+        domain: Option<String>,
+        #[arg(long, requires = "domain")]
+        name: Option<String>,
+        #[arg(long, requires = "domain")]
+        user: Option<String>,
+        #[arg(long, requires = "domain")]
+        reveal: bool,
+    },
 
     #[command(about = "Unlock the local Bitwarden database")]
-    Unlock,
+    Unlock {
+        #[arg(long, conflicts_with = "keychain_store")]
+        keychain: bool,
+        /// Verify the master password via pinentry, then store it in the macOS login keychain.
+        #[arg(long)]
+        keychain_store: bool,
+    },
 
     #[command(about = "Check if the local Bitwarden database is unlocked")]
     Unlocked,
@@ -81,13 +96,18 @@ enum Opt {
         field: Option<String>,
         #[arg(long, help = "Display the notes in addition to the password")]
         full: bool,
-        #[structopt(long, help = "Display output as JSON")]
+        #[arg(long, visible_alias = "json", conflicts_with_all = ["field", "full", "codes", "list_fields"], help = "Structured fields; masked unless --reveal")]
         raw: bool,
         #[cfg(feature = "clipboard")]
         #[structopt(short, long, help = "Copy result to clipboard")]
+        #[arg(requires = "reveal", conflicts_with_all = ["raw", "codes", "full", "list_fields"])]
         clipboard: bool,
         #[structopt(short, long, help = "List fields in this entry")]
         list_fields: bool,
+        #[arg(long)]
+        reveal: bool,
+        #[arg(long, conflicts_with_all = ["field", "full", "list_fields"])]
+        codes: bool,
     },
 
     #[command(about = "Search for entries")]
@@ -143,6 +163,8 @@ enum Opt {
         uri: Vec<String>,
         #[arg(long, help = "Folder for the password entry")]
         folder: Option<String>,
+        #[command(flatten)]
+        write: commands::WriteOptions,
     },
 
     #[command(
@@ -198,6 +220,8 @@ enum Opt {
                 of words to generate, rather than characters."
         )]
         diceware: bool,
+        #[command(flatten)]
+        write: commands::WriteOptions,
     },
 
     #[command(
@@ -213,37 +237,28 @@ enum Opt {
     Edit {
         #[command(flatten)]
         find_args: FindArgs,
+        #[command(flatten)]
+        write: commands::WriteOptions,
     },
 
     #[command(
-        about = "Set individual fields of a login without touching the rest",
-        long_about = "Set individual fields of a login without touching the rest\n\n\
-            Unlike `edit`, which round-trips the whole password + notes through \
-            an editor (and cannot express a TOTP seed at all), `set` updates \
-            exactly the fields you name and leaves every other field as it is. \
-            Pass an empty string to clear a field. Refuses to run with no \
-            field given, so a script whose value came back empty can never \
-            silently blank an entry."
+        about = "Update selected login fields; preview values safely before saving"
     )]
     Set {
         #[command(flatten)]
         find_args: FindArgs,
-        #[arg(long, help = "TOTP seed (otpauth:// URI or base32 secret)")]
-        totp: Option<String>,
-        #[arg(long, help = "Username")]
-        username: Option<String>,
-        #[arg(long, help = "Password (also records the previous one in history)")]
-        password: Option<String>,
-        #[arg(long, help = "URI; repeat to set several (replaces the list)")]
-        uri: Vec<String>,
-        #[arg(long, help = "Notes")]
-        notes: Option<String>,
+        #[command(flatten)]
+        fields: commands::SetFields,
+        #[command(flatten)]
+        write: commands::WriteOptions,
     },
 
     #[command(about = "Remove a given entry", visible_alias = "rm")]
     Remove {
         #[command(flatten)]
         find_args: FindArgs,
+        #[command(flatten)]
+        write: commands::WriteOptions,
     },
 
     #[command(about = "View the password history for a given entry")]
@@ -283,8 +298,8 @@ impl Opt {
                 format!("config {}", config.subcommand_name())
             }
             Self::Register => "register".to_string(),
-            Self::Login => "login".to_string(),
-            Self::Unlock => "unlock".to_string(),
+            Self::Login { .. } => "login".to_string(),
+            Self::Unlock { .. } => "unlock".to_string(),
             Self::Unlocked => "unlocked".to_string(),
             Self::Sync => "sync".to_string(),
             Self::List { .. } => "list".to_string(),
@@ -382,13 +397,25 @@ enum Fido2 {
     Assert {
         #[command(flatten)]
         find_args: FindArgs,
-        #[arg(long, help = "Relying party id; defaults to the credential's stored rpId")]
+        #[arg(
+            long,
+            help = "Relying party id; defaults to the credential's stored rpId"
+        )]
         rp_id: Option<String>,
-        #[arg(long, help = "SHA-256 of the clientDataJSON, 32 bytes as hex or base64url")]
+        #[arg(
+            long,
+            help = "SHA-256 of the clientDataJSON, 32 bytes as hex or base64url"
+        )]
         client_data_hash: String,
-        #[arg(long, help = "Signature counter to report; defaults to the stored counter (0 for synced passkeys)")]
+        #[arg(
+            long,
+            help = "Signature counter to report; defaults to the stored counter (0 for synced passkeys)"
+        )]
         counter: Option<u32>,
-        #[arg(long, help = "Set the UV (user verified) flag in addition to UP")]
+        #[arg(
+            long,
+            help = "Set the UV (user verified) flag in addition to UP"
+        )]
         uv: bool,
     },
 }
@@ -430,8 +457,30 @@ fn main() {
             Config::Unset { key } => commands::config_unset(&key),
         },
         Opt::Register => commands::register(),
-        Opt::Login => commands::login(),
-        Opt::Unlock => commands::unlock(),
+        Opt::Login {
+            domain,
+            name,
+            user,
+            reveal,
+        } => match domain {
+            Some(domain) => commands::domain_login(
+                &domain,
+                name.as_deref(),
+                user.as_deref(),
+                reveal,
+            ),
+            None => commands::login(),
+        },
+        Opt::Unlock {
+            keychain,
+            keychain_store,
+        } => {
+            if keychain || keychain_store {
+                commands::unlock_keychain(keychain_store)
+            } else {
+                commands::unlock()
+            }
+        }
         Opt::Unlocked => commands::unlocked(),
         Opt::Sync => commands::sync(),
         Opt::List { fields, raw } => commands::list(&fields, raw),
@@ -443,6 +492,8 @@ fn main() {
             #[cfg(feature = "clipboard")]
             clipboard,
             list_fields,
+            reveal,
+            codes,
         } => commands::get(
             find_args.needle.clone(),
             find_args.user.as_deref(),
@@ -456,6 +507,8 @@ fn main() {
             false,
             find_args.ignorecase,
             list_fields,
+            reveal,
+            codes,
         ),
         Opt::Search {
             term,
@@ -482,6 +535,7 @@ fn main() {
             user,
             uri,
             folder,
+            write,
         } => commands::add(
             &name,
             user.as_deref(),
@@ -491,6 +545,7 @@ fn main() {
                 .map(|uri| (uri.clone(), None))
                 .collect::<Vec<_>>(),
             folder.as_deref(),
+            &write,
         ),
         Opt::Generate {
             len,
@@ -502,6 +557,7 @@ fn main() {
             only_numbers,
             nonconfusables,
             diceware,
+            write,
         } => {
             let ty = if no_symbols {
                 rbw::pwgen::Type::NoSymbols
@@ -525,32 +581,34 @@ fn main() {
                 folder.as_deref(),
                 len,
                 ty,
+                &write,
             )
         }
-        Opt::Edit { find_args } => commands::edit(
+        Opt::Edit { find_args, write } => commands::edit(
             find_args.needle,
             find_args.user.as_deref(),
             find_args.folder.as_deref(),
             find_args.ignorecase,
+            &write,
         ),
-        Opt::Set { find_args, totp, username, password, uri, notes } => commands::set(
+        Opt::Set {
+            find_args,
+            fields,
+            write,
+        } => commands::set(
             find_args.needle,
             find_args.user.as_deref(),
             find_args.folder.as_deref(),
             find_args.ignorecase,
-            commands::SetFields {
-                totp,
-                username,
-                password,
-                uris: uri,
-                notes,
-            },
+            fields,
+            &write,
         ),
-        Opt::Remove { find_args } => commands::remove(
+        Opt::Remove { find_args, write } => commands::remove(
             find_args.needle,
             find_args.user.as_deref(),
             find_args.folder.as_deref(),
             find_args.ignorecase,
+            &write,
         ),
         Opt::History { find_args } => commands::history(
             find_args.needle,
@@ -562,7 +620,13 @@ fn main() {
         Opt::Purge => commands::purge(),
         Opt::Fido2 { fido2 } => match fido2 {
             Fido2::List => commands::fido2_list(),
-            Fido2::Assert { find_args, rp_id, client_data_hash, counter, uv } => commands::fido2_assert(
+            Fido2::Assert {
+                find_args,
+                rp_id,
+                client_data_hash,
+                counter,
+                uv,
+            } => commands::fido2_assert(
                 find_args.needle,
                 find_args.user.as_deref(),
                 find_args.folder.as_deref(),
@@ -650,5 +714,61 @@ fn main() {
     if let Err(e) = res {
         eprintln!("{e:#}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+    #[test]
+    fn command_schema_and_new_interfaces() {
+        Opt::command().debug_assert();
+        for args in [
+            vec![
+                "bwu",
+                "set",
+                "item",
+                "--uri-add",
+                "https://example.com",
+                "--match",
+                "host",
+                "--dry-run",
+            ],
+            vec!["bwu", "set", "item", "--totp", "JBSWY3DPEHPK3PXP", "--yes"],
+            vec!["bwu", "get", "item", "--json", "--reveal"],
+            vec!["bwu", "get", "item", "--codes"],
+            vec![
+                "bwu",
+                "login",
+                "--domain",
+                "example.com",
+                "--name",
+                "item",
+                "--user",
+                "user",
+                "--reveal",
+            ],
+            vec!["bwu", "unlock", "--keychain"],
+            vec!["bwu", "edit", "item", "--allow-empty", "--yes"],
+        ] {
+            assert!(Opt::try_parse_from(args).is_ok());
+        }
+        for args in [
+            vec![
+                "bwu",
+                "set",
+                "item",
+                "--uri",
+                "https://example.com",
+                "--uri-add",
+                "https://other.com",
+            ],
+            vec!["bwu", "set", "item", "--yes", "--dry-run"],
+            vec!["bwu", "login", "--reveal"],
+            vec!["bwu", "get", "item", "--json", "--field", "notes"],
+            vec!["bwu", "unlock", "--keychain", "--keychain-store"],
+        ] {
+            assert!(Opt::try_parse_from(args).is_err());
+        }
     }
 }

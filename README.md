@@ -1,5 +1,21 @@
 # bitwarden-use
 
+Version 0.2.0 adds safe field updates and masked reads. See [the offline command guide](docs/release.html).
+
+```sh
+bwu get ITEM --json                            # masked by default
+bwu get ITEM --field password --reveal          # explicit plaintext output
+bwu login --domain example.com --name ITEM --reveal
+bwu set ITEM --uri https://example.com --match host --dry-run
+bwu set ITEM --totp SEED --yes
+bwu unlock --keychain-store                    # macOS: one-time verified enrollment
+bwu unlock --keychain
+```
+
+Scripts must add `--reveal` when consuming secrets and `--yes` when applying reviewed writes.
+Empty values require `--allow-empty`; URI edits preserve unselected fields, passkeys and attachments.
+Custom fields use exact names. Domain lookup never reveals credentials until exactly one item matches.
+
 <p align="center">
   <img src="assets/hero.png" width="760"
        alt="bitwarden-use pulls a passkey out of your Bitwarden vault so the command line can sign logins headlessly — no browser, no fingerprint tap">
@@ -96,9 +112,9 @@ and explicitly lock the database with `bitwarden-use lock` or
 
 `bitwarden-use help` gives more information about the available functionality.
 
-Run `bitwarden-use get <name>` to get your passwords. Use `--full` to also show
-the username and note, `--field=<field>` to get a specific default or custom
-field, and `--raw` to print JSON. In addition to matching against the name,
+Run `bitwarden-use get <name>` to inspect a masked result; add `--reveal` to read the password.
+Use `--full` or `--json` for structured fields, and `--field=<field>` for a built-in or exact custom field.
+`--raw` remains supported as the JSON option. In addition to matching against the name,
 you can pass a UUID to search for the entry with that id, or a URL to search
 for an entry with a matching website entry.
 

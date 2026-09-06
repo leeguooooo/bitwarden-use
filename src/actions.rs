@@ -193,59 +193,6 @@ fn add_once(
     Ok(())
 }
 
-pub fn edit(
-    access_token: &str,
-    refresh_token: &str,
-    id: &str,
-    org_id: Option<&str>,
-    name: &str,
-    data: &crate::db::EntryData,
-    fields: &[crate::db::Field],
-    notes: Option<&str>,
-    folder_uuid: Option<&str>,
-    history: &[crate::db::HistoryEntry],
-) -> Result<(Option<String>, ())> {
-    with_exchange_refresh_token(access_token, refresh_token, |access_token| {
-        edit_once(
-            access_token,
-            id,
-            org_id,
-            name,
-            data,
-            fields,
-            notes,
-            folder_uuid,
-            history,
-        )
-    })
-}
-
-fn edit_once(
-    access_token: &str,
-    id: &str,
-    org_id: Option<&str>,
-    name: &str,
-    data: &crate::db::EntryData,
-    fields: &[crate::db::Field],
-    notes: Option<&str>,
-    folder_uuid: Option<&str>,
-    history: &[crate::db::HistoryEntry],
-) -> Result<()> {
-    let (client, _) = api_client()?;
-    client.edit(
-        access_token,
-        id,
-        org_id,
-        name,
-        data,
-        fields,
-        notes,
-        folder_uuid,
-        history,
-    )?;
-    Ok(())
-}
-
 pub fn remove(
     access_token: &str,
     refresh_token: &str,
@@ -367,4 +314,17 @@ async fn api_client_async(
         config.client_cert_path(),
     );
     Ok((client, config))
+}
+
+/// Update only explicitly selected encrypted fields.
+pub fn patch_cipher(
+    access_token: &str,
+    refresh_token: &str,
+    id: &str,
+    patch: &crate::mutation::Patch,
+) -> Result<(Option<String>, ())> {
+    with_exchange_refresh_token(access_token, refresh_token, |token| {
+        let (client, _) = api_client()?;
+        client.patch_cipher(token, id, patch)
+    })
 }

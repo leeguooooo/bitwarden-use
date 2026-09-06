@@ -5,19 +5,16 @@ use std::io::{Read as _, Write as _};
 use is_terminal::IsTerminal as _;
 
 pub fn edit(contents: &str, help: &str) -> Result<String> {
-    if !std::io::stdin().is_terminal() {
-        // directly read from piped content
-        return match std::io::read_to_string(std::io::stdin()) {
-            Err(e) => Err(Error::FailedToReadFromStdin { err: e }),
-            // An empty pipe used to sail straight through: the caller parses
-            // "" into password: None, notes: None and writes that back, so a
-            // stray `bwu edit foo < /dev/null` — or any script whose command
-            // substitution came back empty — silently blanks a real entry.
-            // A write that destroys data must not be the default outcome of
-            // producing no input.
-            Ok(res) if res.trim().is_empty() => Err(Error::EmptyStdinEdit),
-            Ok(res) => Ok(res),
-        };
+    edit_with_options(contents, help, false)
+}
+
+pub fn edit_with_options(
+    contents: &str,
+    help: &str,
+    allow_empty: bool,
+) -> Result<String> {
+    if let Some(input) = read_stdin(allow_empty)? {
+        return Ok(input);
     }
 
     let mut var = "VISUAL";
@@ -95,6 +92,33 @@ pub fn edit(contents: &str, help: &str) -> Result<String> {
     drop(fh);
 
     Ok(contents)
+}
+
+/// Read piped input before unlocking or making any network request.
+pub fn read_stdin(allow_empty: bool) -> Result<Option<String>> {
+    if std::io::stdin().is_terminal() {
+        return Ok(None);
+    }
+    let contents = std::io::read_to_string(std::io::stdin())
+        .map_err(|err| Error::FailedToReadFromStdin { err })?;
+    validate_stdin(&contents, allow_empty)?;
+    Ok(Some(contents))
+}
+
+fn validate_stdin(contents: &str, allow_empty: bool) -> Result<()> {
+    if !allow_empty && contents.trim().is_empty() {
+        return Err(Error::EmptyStdinEdit);
+    }
+    Ok(())
+}
+
+#[test]
+fn empty_input_requires_explicit_permission() {
+    for input in ["", " ", "\n\t"] {
+        assert!(validate_stdin(input, false).is_err());
+        assert!(validate_stdin(input, true).is_ok());
+    }
+    assert!(validate_stdin("password\nnotes", false).is_ok());
 }
 
 fn contains_shell_metacharacters(cmd: &std::ffi::OsStr) -> bool {

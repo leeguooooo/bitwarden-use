@@ -1,9 +1,9 @@
 [package]
 name = "bitwarden-use"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["leeguooooo <leeguooooo@gmail.com>"]
 edition = "2021"
-rust-version = "1.82.0"
+rust-version = "1.85.0"
 
 description = "Bitwarden/Vaultwarden CLI with FIDO2 (passkey) extraction"
 repository = "https://github.com/leeguooooo/bitwarden-use"
@@ -31,6 +31,7 @@ name = "bitwarden-use-agent"
 path = "src/bin/rbw-agent/main.rs"
 
 [dependencies]
+psl = "2"
 aes = "0.8.4"
 anyhow = "1.0.100"
 argon2 = "0.5.3"
@@ -167,3 +168,6 @@ assets = [
         "644",
     ],
 ]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"

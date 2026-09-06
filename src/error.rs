@@ -1,5 +1,7 @@
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("refusing unsafe write: {message}")]
+    UnsafeWrite { message: String },
     #[error("email address not set")]
     ConfigMissingEmail,
 
@@ -42,8 +44,8 @@ pub enum Error {
     #[error(
         "refusing to write an empty entry: nothing was read from stdin.\n\
          Piping empty or whitespace-only input would blank the password and \
-         notes of an existing entry. If you really mean to clear a field, \
-         pipe an explicit value."
+         notes of an existing entry. To clear explicitly, pass --allow-empty \
+         and confirm the masked preview."
     )]
     EmptyStdinEdit,
 

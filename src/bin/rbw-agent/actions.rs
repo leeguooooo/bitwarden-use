@@ -374,8 +374,9 @@ async fn login_success(
 async fn unlock_state(
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     environment: &rbw::protocol::Environment,
+    keychain: Option<bool>,
 ) -> anyhow::Result<()> {
-    if state.lock().await.needs_unlock() {
+    if state.lock().await.needs_unlock() || keychain.is_some() {
         let db = load_db().await?;
 
         let Some(kdf) = db.kdf else {
@@ -413,19 +414,23 @@ async fn unlock_state(
             } else {
                 None
             };
-            let password = rbw::pinentry::getpin(
-                &config_pinentry().await?,
-                "Master Password",
-                &format!(
-                    "Unlock the local database for '{}'",
-                    rbw::dirs::profile()
-                ),
-                err.as_deref(),
-                environment,
-                true,
-            )
-            .await
-            .context("failed to read password from pinentry")?;
+            let password = if keychain == Some(false) {
+                rbw::keychain::read()?
+            } else {
+                rbw::pinentry::getpin(
+                    &config_pinentry().await?,
+                    "Master Password",
+                    &format!(
+                        "Unlock the local database for '{}'",
+                        rbw::dirs::profile()
+                    ),
+                    err.as_deref(),
+                    environment,
+                    true,
+                )
+                .await
+                .context("failed to read password from pinentry")?
+            };
             match rbw::actions::unlock(
                 &email,
                 &password,
@@ -438,11 +443,14 @@ async fn unlock_state(
                 &db.protected_org_keys,
             ) {
                 Ok((keys, org_keys)) => {
+                    if keychain == Some(true) {
+                        rbw::keychain::store(&password)?;
+                    }
                     unlock_success(state, keys, org_keys).await?;
                     break;
                 }
                 Err(rbw::error::Error::IncorrectPassword { message }) => {
-                    if i == 3 {
+                    if i == 3 || keychain == Some(false) {
                         return Err(rbw::error::Error::IncorrectPassword {
                             message,
                         })
@@ -463,7 +471,7 @@ pub async fn unlock(
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     environment: &rbw::protocol::Environment,
 ) -> anyhow::Result<()> {
-    unlock_state(state, environment).await?;
+    unlock_state(state, environment, None).await?;
 
     respond_ack(sock).await?;
 
@@ -692,6 +700,7 @@ pub async fn encrypt(
     sock: &mut crate::sock::Sock,
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     plaintext: &str,
+    entry_key: Option<&str>,
     org_id: Option<&str>,
 ) -> anyhow::Result<()> {
     let state = state.lock().await;
@@ -700,8 +709,9 @@ pub async fn encrypt(
             "failed to find encryption keys in in-memory state"
         ));
     };
-    let cipherstring = rbw::cipherstring::CipherString::encrypt_symmetric(
+    let cipherstring = rbw::cipherstring::encrypt_for_entry(
         keys,
+        entry_key,
         plaintext.as_bytes(),
     )
     .context("failed to encrypt plaintext secret")?;
@@ -858,7 +868,7 @@ pub async fn get_ssh_public_keys(
         state.set_timeout();
         state.last_environment().clone()
     };
-    unlock_state(state.clone(), &environment).await?;
+    unlock_state(state.clone(), &environment, None).await?;
 
     let db = load_db().await?;
     let mut pubkeys = Vec::new();
@@ -894,7 +904,7 @@ pub async fn find_ssh_private_key(
         state.set_timeout();
         state.last_environment().clone()
     };
-    unlock_state(state.clone(), &environment).await?;
+    unlock_state(state.clone(), &environment, None).await?;
 
     let request_bytes = request_public_key.to_bytes();
 
@@ -949,4 +959,15 @@ pub async fn find_ssh_private_key(
     }
 
     Err(anyhow::anyhow!("No matching private key found"))
+}
+
+pub async fn unlock_keychain(
+    sock: &mut crate::sock::Sock,
+    state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
+    environment: &rbw::protocol::Environment,
+    store: bool,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(cfg!(target_os = "macos"), "--keychain requires macOS");
+    unlock_state(state, environment, Some(store)).await?;
+    respond_ack(sock).await
 }

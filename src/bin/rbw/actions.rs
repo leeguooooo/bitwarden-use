@@ -109,10 +109,19 @@ pub fn encrypt(
     plaintext: &str,
     org_id: Option<&str>,
 ) -> anyhow::Result<String> {
+    encrypt_entry(plaintext, None, org_id)
+}
+
+pub fn encrypt_entry(
+    plaintext: &str,
+    entry_key: Option<&str>,
+    org_id: Option<&str>,
+) -> anyhow::Result<String> {
     let mut sock = connect()?;
     sock.send(&rbw::protocol::Request::new(
         get_environment(),
         rbw::protocol::Action::Encrypt {
+            entry_key: entry_key.map(str::to_owned),
             plaintext: plaintext.to_string(),
             org_id: org_id.map(std::string::ToString::to_string),
         },
@@ -200,4 +209,8 @@ fn get_environment() -> rbw::protocol::Environment {
         })
         .collect();
     rbw::protocol::Environment::new(tty, env_vars)
+}
+
+pub fn unlock_keychain(store: bool) -> anyhow::Result<()> {
+    simple_action(rbw::protocol::Action::UnlockKeychain { store })
 }

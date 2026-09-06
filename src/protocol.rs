@@ -13,8 +13,8 @@ pub const VERSION: u32 = {
     let patch = env!("CARGO_PKG_VERSION_PATCH");
 
     unwrap(&u32::from_str_radix(major, 10)) * 1_000_000
-        + unwrap(&u32::from_str_radix(minor, 10)) * 1_000_000
-        + unwrap(&u32::from_str_radix(patch, 10)) * 1_000_000
+        + unwrap(&u32::from_str_radix(minor, 10)) * 1_000
+        + unwrap(&u32::from_str_radix(patch, 10))
 };
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -171,6 +171,9 @@ pub enum Action {
     Login,
     Register,
     Unlock,
+    UnlockKeychain {
+        store: bool,
+    },
     CheckLock,
     Lock,
     Sync,
@@ -180,6 +183,8 @@ pub enum Action {
         org_id: Option<String>,
     },
     Encrypt {
+        #[serde(default)]
+        entry_key: Option<String>,
         plaintext: String,
         org_id: Option<String>,
     },
