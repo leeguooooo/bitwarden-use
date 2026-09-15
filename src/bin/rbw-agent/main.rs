@@ -5,6 +5,7 @@ mod agent;
 mod daemon;
 mod debugger;
 mod notifications;
+mod screen;
 mod sock;
 mod ssh_agent;
 mod state;

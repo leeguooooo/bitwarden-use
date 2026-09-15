@@ -18,6 +18,16 @@ pub struct Config {
     pub sync_interval: u64,
     #[serde(default = "default_pinentry")]
     pub pinentry: String,
+    /// Folders whose items any local process may reveal; items elsewhere need
+    /// Touch ID. Empty = no gate (previous behaviour). Reveals are audited.
+    #[serde(default)]
+    pub reveal_folders: Vec<String>,
+    /// Unlock from the Keychain (after Touch ID) instead of pinentry.
+    #[serde(default)]
+    pub unlock_with_keychain: bool,
+    /// Drop keys when the screen locks (macOS; the screen locks on sleep).
+    #[serde(default = "default_lock_on_screen_lock")]
+    pub lock_on_screen_lock: bool,
     pub client_cert_path: Option<std::path::PathBuf>,
     // backcompat, no longer generated in new configs
     #[serde(skip_serializing)]
@@ -36,10 +46,17 @@ impl Default for Config {
             lock_timeout: default_lock_timeout(),
             sync_interval: default_sync_interval(),
             pinentry: default_pinentry(),
+            reveal_folders: Vec::new(),
+            unlock_with_keychain: false,
+            lock_on_screen_lock: default_lock_on_screen_lock(),
             client_cert_path: None,
             device_id: None,
         }
     }
+}
+
+pub fn default_lock_on_screen_lock() -> bool {
+    true
 }
 
 pub fn default_lock_timeout() -> u64 {

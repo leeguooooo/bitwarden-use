@@ -1,6 +1,10 @@
 # bitwarden-use
 
-Version 0.2.0 adds safe field updates and masked reads. See [the offline command guide](docs/release.html).
+Version 0.3.0 puts a human in the loop: Touch ID before Keychain unlock and before revealing
+items outside `reveal_folders`, an audit log of every reveal, `fido2 get` masks the private key
+unless `--reveal`, and the agent drops keys when the screen locks. See
+[Human confirmation and audit](#human-confirmation-and-audit-macos). Version 0.2.0 added safe
+field updates and masked reads. See [the offline command guide](docs/release.html).
 
 ```sh
 bwu get ITEM --json                            # masked by default
@@ -88,6 +92,41 @@ Available configuration options:
 * `pinentry`: The
   [pinentry](https://www.gnupg.org/related_software/pinentry/index.html)
   executable to use. Defaults to `pinentry`.
+
+* `reveal_folders`: Comma-separated folders whose items any local process
+  may reveal (`--reveal`, `code`, `login --domain --reveal`). Items elsewhere
+  need Touch ID each time. Empty (default) keeps the old behaviour.
+* `unlock_with_keychain`: `true` to unlock from the macOS Keychain after Touch
+  ID instead of typing the master password (enroll once with
+  `unlock --keychain-store`). Falls back to pinentry if that fails.
+* `lock_on_screen_lock`: Drop the keys when the screen locks (default `true`,
+  macOS; the screen locks on sleep).
+
+### Human confirmation and audit (macOS)
+
+A background agent that holds your keys is convenient, but any process running
+as you can talk to it. 0.3.0 adds a human gate for the parts that matter:
+
+* **Keychain unlock needs Touch ID** (login password as fallback) every time,
+  both for `unlock --keychain` and with `unlock_with_keychain`.
+* **Reveals outside `reveal_folders` need Touch ID.** Keep the secrets you let
+  scripts or AI agents use in one folder (for example `memory`); everything
+  else asks you first.
+* **Every reveal is logged** to `~/Library/Logs/bitwarden-use/reveal.log`: time,
+  command, item, field, folder, the process chain that asked, and how it was
+  authorized. Never the value.
+* **`fido2 get` hides the private key** unless `--reveal`; prefer
+  `fido2 assert`, which signs without exporting it.
+* **Screen lock drops the keys**, independent of `lock_timeout`.
+
+Suggested setup:
+
+```sh
+bwu config set reveal_folders memory
+bwu config set lock_timeout 14400          # 4 h
+bwu unlock --keychain-store                # type the master password once
+bwu config set unlock_with_keychain true
+```
 
 ### Profiles
 

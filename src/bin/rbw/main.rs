@@ -372,17 +372,20 @@ enum Fido2 {
     )]
     List,
     #[command(
-        about = "Display a passkey, including its decrypted private key",
-        long_about = "Display a passkey, including its decrypted private key\n\n\
-            Prints the credentialId, rpId, userHandle, keyType and keyCurve, \
-            and the decrypted private key both as base64url (the raw \
-            decrypted KeyValue) and as a PKCS#8 PEM document. The entry can \
-            be selected by name, URI, UUID, or by the credentialId of the \
-            passkey itself."
+        about = "Display a passkey; the private key only with --reveal",
+        long_about = "Display a passkey; the private key only with --reveal\n\n\
+            Prints the credentialId, rpId, userHandle, keyType and keyCurve. \
+            With --reveal (and Touch ID when reveal_folders is set) it also \
+            prints the decrypted private key as base64url and as a PKCS#8 PEM \
+            document. Prefer `fido2 assert`, which signs without exporting \
+            the key. The entry can be selected by name, URI, UUID, or by the \
+            credentialId of the passkey itself."
     )]
     Get {
         #[command(flatten)]
         find_args: FindArgs,
+        #[arg(long, help = "Print the decrypted private key (audited)")]
+        reveal: bool,
     },
     #[command(
         about = "Sign a WebAuthn assertion with a stored passkey; the private key never leaves the process",
@@ -636,11 +639,12 @@ fn main() {
                 counter,
                 uv,
             ),
-            Fido2::Get { find_args } => commands::fido2_get(
+            Fido2::Get { find_args, reveal } => commands::fido2_get(
                 find_args.needle,
                 find_args.user.as_deref(),
                 find_args.folder.as_deref(),
                 find_args.ignorecase,
+                reveal,
             ),
         },
         Opt::StopAgent => commands::stop_agent(),

@@ -1099,6 +1099,23 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
             config.sync_interval = interval;
         }
         "pinentry" => config.pinentry = value.to_string(),
+        "reveal_folders" => {
+            config.reveal_folders = value
+                .split(',')
+                .map(|f| f.trim().to_string())
+                .filter(|f| !f.is_empty())
+                .collect();
+        }
+        "unlock_with_keychain" => {
+            config.unlock_with_keychain = value
+                .parse()
+                .context("unlock_with_keychain must be true or false")?;
+        }
+        "lock_on_screen_lock" => {
+            config.lock_on_screen_lock = value
+                .parse()
+                .context("lock_on_screen_lock must be true or false")?;
+        }
         _ => return Err(anyhow::anyhow!("invalid config key: {key}")),
     }
     config.save()?;
@@ -1128,6 +1145,12 @@ pub fn config_unset(key: &str) -> anyhow::Result<()> {
             config.lock_timeout = rbw::config::default_lock_timeout();
         }
         "pinentry" => config.pinentry = rbw::config::default_pinentry(),
+        "reveal_folders" => config.reveal_folders = Vec::new(),
+        "unlock_with_keychain" => config.unlock_with_keychain = false,
+        "lock_on_screen_lock" => {
+            config.lock_on_screen_lock =
+                rbw::config::default_lock_on_screen_lock();
+        }
         _ => return Err(anyhow::anyhow!("invalid config key: {key}")),
     }
     config.save()?;
@@ -1240,6 +1263,15 @@ pub fn get(
     let (_, decrypted) =
         find_entry(&db, needle, user, folder, ignore_case)
             .with_context(|| format!("couldn't find entry for '{desc}'"))?;
+    if reveal {
+        rbw::reveal::authorize(
+            "get",
+            &decrypted.name,
+            Some(&decrypted.id),
+            field,
+            decrypted.folder.as_deref(),
+        )?;
+    }
     read::display(
         &decrypted,
         field,
@@ -1295,6 +1327,7 @@ pub fn fido2_get(
     user: Option<&str>,
     folder: Option<&str>,
     ignore_case: bool,
+    reveal: bool,
 ) -> anyhow::Result<()> {
     unlock()?;
 
@@ -1379,7 +1412,7 @@ pub fn fido2_get(
             println!();
         }
         first = false;
-        display_fido2_credential(&name, cred, &entry)?;
+        display_fido2_credential(&name, cred, &entry, reveal)?;
     }
 
     Ok(())
@@ -1408,6 +1441,7 @@ fn display_fido2_credential(
     name: &str,
     cred: &rbw::db::Fido2Credential,
     entry: &rbw::db::Entry,
+    reveal: bool,
 ) -> anyhow::Result<()> {
     // every fido2 field is an EncString in the vault — decrypt them all
     let credential_id =
@@ -1426,6 +1460,19 @@ fn display_fido2_credential(
     println!("keyCurve: {}", key_curve.as_deref().unwrap_or(""));
 
     if let Some(key_value) = &key_value {
+        if !reveal {
+            println!(
+                "privateKey: <hidden> (add --reveal to print it, or sign with `fido2 assert`)"
+            );
+            return Ok(());
+        }
+        rbw::reveal::authorize(
+            "fido2 get",
+            name,
+            Some(&entry.id),
+            Some("privateKey"),
+            None,
+        )?;
         println!("privateKey (base64url): {key_value}");
         match fido2_private_key_pem(key_value) {
             Ok(pem) => print!("{pem}"),
@@ -1832,6 +1879,13 @@ pub fn code(
 
     if let DecryptedData::Login { totp, .. } = decrypted.data {
         if let Some(totp) = totp {
+            rbw::reveal::authorize(
+                "code",
+                &decrypted.name,
+                Some(&decrypted.id),
+                Some("totp"),
+                decrypted.folder.as_deref(),
+            )?;
             val_display_or_store(clipboard, &generate_totp(&totp)?);
         } else {
             return Err(anyhow::anyhow!(

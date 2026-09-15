@@ -83,6 +83,20 @@ bitwarden-use unlock
 export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/rbw/ssh-agent-socket"   # rbw-<profile> if RBW_PROFILE set
 ```
 
+## Human confirmation (0.3.0+)
+
+- Items outside the configured `reveal_folders` (`bwu config show`) trigger a **Touch ID prompt on
+  the user's Mac** for `--reveal`, `code` and `login --domain --reveal`. Tell the user a prompt is
+  coming, wait, and never try to route around it (other flags, other items, reading the Keychain).
+  A refused or timed-out prompt is the user's answer.
+- Secrets meant for agents live in the allowed folder (for leo: `memory`). Add new ones there with
+  `bwu add <name> <user> --folder memory` (password on stdin) instead of pasting them into notes.
+- Every reveal is appended to `~/Library/Logs/bitwarden-use/reveal.log` (no values). Mention it if
+  the user asks what was accessed.
+- `fido2 get` prints metadata only; `--reveal` for the private key (always confirmed). Prefer
+  `fido2 assert`.
+- Unlocking may also show Touch ID (Keychain unlock). The vault locks itself when the screen locks.
+
 ## Agent etiquette
 
 - Treat every output as a secret: pass values via pipes/env into the consuming command, don't echo

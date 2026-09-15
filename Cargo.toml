@@ -1,6 +1,6 @@
 [package]
 name = "bitwarden-use"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["leeguooooo <leeguooooo@gmail.com>"]
 edition = "2021"
 rust-version = "1.85.0"
@@ -171,3 +171,8 @@ assets = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7"
+core-foundation = "0.10"
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = "0.3"
+objc2-local-authentication = "0.3"

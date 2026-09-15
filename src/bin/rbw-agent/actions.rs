@@ -406,6 +406,10 @@ async fn unlock_state(
         let email = config_email().await?;
 
         let mut err_msg = None;
+        // Explicit `unlock --keychain`, or `unlock_with_keychain` for ordinary
+        // unlocks (which fall back to pinentry if the keychain path fails).
+        let mut use_keychain = keychain == Some(false)
+            || (keychain.is_none() && config_unlock_with_keychain().await?);
         for i in 1_u8..=3 {
             let err = if i > 1 {
                 // this unwrap is safe because we only ever continue the loop
@@ -414,8 +418,22 @@ async fn unlock_state(
             } else {
                 None
             };
-            let password = if keychain == Some(false) {
-                rbw::keychain::read()?
+            let from_keychain = if use_keychain {
+                match rbw::keychain::read() {
+                    Ok(p) => Some(p),
+                    Err(e) if keychain.is_none() => {
+                        eprintln!(
+                            "keychain unlock failed, asking instead: {e:#}"
+                        );
+                        None
+                    }
+                    Err(e) => return Err(e),
+                }
+            } else {
+                None
+            };
+            let password = if let Some(p) = from_keychain {
+                p
             } else {
                 rbw::pinentry::getpin(
                     &config_pinentry().await?,
@@ -450,6 +468,8 @@ async fn unlock_state(
                     break;
                 }
                 Err(rbw::error::Error::IncorrectPassword { message }) => {
+                    // a stale keychain password: ask the human next time
+                    use_keychain = false;
                     if i == 3 || keychain == Some(false) {
                         return Err(rbw::error::Error::IncorrectPassword {
                             message,
@@ -826,6 +846,11 @@ async fn config_base_url() -> anyhow::Result<String> {
 async fn config_pinentry() -> anyhow::Result<String> {
     let config = rbw::config::Config::load_async().await?;
     Ok(config.pinentry)
+}
+
+async fn config_unlock_with_keychain() -> anyhow::Result<bool> {
+    let config = rbw::config::Config::load_async().await?;
+    Ok(config.unlock_with_keychain)
 }
 
 pub async fn subscribe_to_notifications(

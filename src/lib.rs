@@ -16,5 +16,8 @@ pub mod protocol;
 pub mod pwgen;
 pub mod wordlist;
 
+pub mod audit;
 pub mod keychain;
 pub mod mutation;
+pub mod reveal;
+pub mod touchid;

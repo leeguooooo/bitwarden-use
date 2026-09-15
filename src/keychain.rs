@@ -33,6 +33,11 @@ pub fn read() -> anyhow::Result<crate::locked::Password> {
     {
         let config = crate::config::Config::load()?;
         let account = account(&config, &crate::dirs::profile())?;
+        // A process running as the user must not unlock silently: the owner
+        // confirms with Touch ID (or the login password) every time.
+        crate::touchid::confirm(
+            "unlock the Bitwarden vault (bitwarden-use)",
+        )?;
         let (value, _) = login_keychain()?.find_generic_password("bitwarden-use.master-password", &account)
             .context("master password unavailable in login keychain; enroll with unlock --keychain-store")?;
         anyhow::ensure!(

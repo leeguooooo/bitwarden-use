@@ -28,7 +28,28 @@ impl Agent {
             Request(std::io::Result<tokio::net::UnixStream>),
             Timeout(()),
             Sync(()),
+            ScreenLocked(()),
         }
+
+        // Emits once each time the screen goes from unlocked to locked.
+        let lock_on_screen_lock = rbw::config::Config::load_async()
+            .await
+            .map_or(true, |c| c.lock_on_screen_lock);
+        let screen =
+            futures_util::stream::unfold(false, |was_locked| async move {
+                let mut was = was_locked;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(5))
+                        .await;
+                    let now = crate::screen::is_locked();
+                    if now && !was {
+                        return Some(((), true));
+                    }
+                    was = now;
+                }
+            })
+            .map(Event::ScreenLocked)
+            .boxed();
 
         let notifications = self
             .state
@@ -47,7 +68,7 @@ impl Agent {
             })
             .boxed();
 
-        let mut stream = futures_util::stream::select_all([
+        let mut streams = vec![
             tokio_stream::wrappers::UnixListenerStream::new(listener)
                 .map(Event::Request)
                 .boxed(),
@@ -62,7 +83,11 @@ impl Agent {
             .map(Event::Sync)
             .boxed(),
             notifications,
-        ]);
+        ];
+        if lock_on_screen_lock && cfg!(target_os = "macos") {
+            streams.push(screen);
+        }
+        let mut stream = futures_util::stream::select_all(streams);
         while let Some(event) = stream.next().await {
             match event {
                 Event::Request(res) => {
@@ -74,17 +99,30 @@ impl Agent {
                         let res =
                             handle_request(&mut sock, state.clone()).await;
                         if let Err(e) = res {
-                            // unwrap is the only option here
-                            sock.send(&rbw::protocol::Response::Error {
-                                error: format!("{e:#}"),
-                            })
-                            .await
-                            .unwrap();
+                            // the client may already be gone (timeout, ^C):
+                            // don't let a dead socket kill the task
+                            if let Err(send_err) = sock
+                                .send(&rbw::protocol::Response::Error {
+                                    error: format!("{e:#}"),
+                                })
+                                .await
+                            {
+                                log::warn!(
+                                    "could not report error to client: {send_err:#}"
+                                );
+                            }
                         }
                     });
                 }
                 Event::Timeout(()) => {
                     self.state.lock().await.clear();
+                }
+                Event::ScreenLocked(()) => {
+                    let mut state = self.state.lock().await;
+                    if !state.needs_unlock() {
+                        state.clear();
+                        eprintln!("screen locked: vault locked");
+                    }
                 }
                 Event::Sync(()) => {
                     let state = self.state.clone();

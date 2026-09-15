@@ -200,6 +200,15 @@ pub fn domain_login(
         anyhow::bail!("expected one domain match, found {}; use --name (exact name or UUID) and/or --user", candidates.len());
     }
     let plain = decrypt_cipher(candidates[0].0)?;
+    if reveal {
+        rbw::reveal::authorize(
+            "login --domain",
+            &plain.name,
+            Some(&plain.id),
+            Some("password"),
+            plain.folder.as_deref(),
+        )?;
+    }
     let DecryptedData::Login {
         username,
         password,

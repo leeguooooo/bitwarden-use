@@ -1,3 +1,14 @@
+# 0.3.0
+
+- Touch ID (login password fallback) before reading the master password from the Keychain.
+- `unlock_with_keychain`: ordinary unlocks use the Touch ID-gated Keychain entry, falling back to pinentry.
+- `reveal_folders`: reveals of items outside these folders need Touch ID; empty keeps the old behaviour.
+- Audit log of every reveal (`get --reveal`, `code`, `login --domain --reveal`, `fido2 get --reveal`) in `~/Library/Logs/bitwarden-use/reveal.log` — time, command, item, field, folder, caller chain, authorization; never the value.
+- `fido2 get` masks the private key unless `--reveal`.
+- Agent drops keys when the screen locks (`lock_on_screen_lock`, default on, macOS).
+
+Breaking changes: `fido2 get` needs `--reveal` to print the private key.
+
 # 0.2.0
 
 - Add URI replacement/addition/removal with matching modes and exact custom-field updates.
