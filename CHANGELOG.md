@@ -1,3 +1,7 @@
+# 0.4.0
+
+- `run --env VAR=ITEM[#FIELD] -- command…`: inject secrets into a command's environment instead of printing them. ITEM is a name, URI, UUID or `bw:<uuid>`; FIELD defaults to the password (`username`, `notes`, `totp`, `custom:<name>`). Same Touch ID and audit rules as `--reveal` (audit `cmd: "run"`); the command replaces the process, so its exit code is returned.
+
 # 0.3.0
 
 - Touch ID (login password fallback) before reading the master password from the Keychain.

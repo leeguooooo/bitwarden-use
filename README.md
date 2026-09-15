@@ -1,12 +1,14 @@
 # bitwarden-use
 
-Version 0.3.0 puts a human in the loop: Touch ID before Keychain unlock and before revealing
-items outside `reveal_folders`, an audit log of every reveal, `fido2 get` masks the private key
-unless `--reveal`, and the agent drops keys when the screen locks. See
-[Human confirmation and audit](#human-confirmation-and-audit-macos). Version 0.2.0 added safe
-field updates and masked reads. See [the offline command guide](docs/release.html).
+Version 0.4.0 adds `run`: secrets go straight into a command's environment and never into your
+terminal, logs or an AI agent's context. Version 0.3.0 puts a human in the loop: Touch ID before
+Keychain unlock and before revealing items outside `reveal_folders`, an audit log of every
+reveal, `fido2 get` masks the private key unless `--reveal`, and the agent drops keys when the
+screen locks. See [Human confirmation and audit](#human-confirmation-and-audit-macos). Version
+0.2.0 added safe field updates and masked reads. See [the offline command guide](docs/release.html).
 
 ```sh
+bwu run --env GH_TOKEN='github token' -- gh api user   # inject, never print (preferred)
 bwu get ITEM --json                            # masked by default
 bwu get ITEM --field password --reveal          # explicit plaintext output
 bwu login --domain example.com --name ITEM --reveal
@@ -94,8 +96,8 @@ Available configuration options:
   executable to use. Defaults to `pinentry`.
 
 * `reveal_folders`: Comma-separated folders whose items any local process
-  may reveal (`--reveal`, `code`, `login --domain --reveal`). Items elsewhere
-  need Touch ID each time. Empty (default) keeps the old behaviour.
+  may reveal (`--reveal`, `code`, `login --domain --reveal`, `run`). Items
+  elsewhere need Touch ID each time. Empty (default) keeps the old behaviour.
 * `unlock_with_keychain`: `true` to unlock from the macOS Keychain after Touch
   ID instead of typing the master password (enroll once with
   `unlock --keychain-store`). Falls back to pinentry if that fails.

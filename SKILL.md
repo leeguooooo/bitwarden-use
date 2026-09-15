@@ -97,9 +97,25 @@ export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/rbw/ssh-agent-socket"   # rbw-<profile> i
   `fido2 assert`.
 - Unlocking may also show Touch ID (Keychain unlock). The vault locks itself when the screen locks.
 
+## Inject, don't print (0.4.0+)
+
+Prefer `run` whenever a secret is only needed by a command: the value goes into that process's
+environment and never into your output or context.
+
+```sh
+bwu run --env GH_TOKEN='github token' -- gh api user
+bwu run --env PW=bw:<uuid> --env USER_NAME='router#username' -- ./login.sh
+bwu run --env KEY='openai#custom:api key' --folder memory -- python3 job.py
+```
+
+`--env` is `VAR=ITEM[#FIELD]` (ITEM: name, URI, UUID or `bw:<uuid>`; FIELD defaults to the
+password; also `username`, `notes`, `totp`, `custom:<name>`). Same confirmation and audit rules as
+`--reveal`. Use `get --reveal` only when the user wants to see the value or no command can take it
+from the environment.
+
 ## Agent etiquette
 
-- Treat every output as a secret: pass values via pipes/env into the consuming command, don't echo
+- Treat every output as a secret: pass values via `run` (or pipes) into the consuming command, don't echo
   passwords or private keys into logs, files, or chat unless the user explicitly asks to see them.
 - Default unlocking is interactive (pinentry); explicit `unlock --keychain` can use a previously
   enrolled entry. If a prompt blocks, let the user complete it rather than retrying.

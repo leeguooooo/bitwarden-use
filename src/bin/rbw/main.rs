@@ -110,6 +110,28 @@ enum Opt {
         codes: bool,
     },
 
+    #[command(
+        about = "Run a command with secrets in its environment (values never printed)",
+        long_about = "Run a command with vault secrets injected as environment variables.\n\n\
+            Each --env is VAR=ITEM[#FIELD]: ITEM is a name, URI, UUID or bw:<uuid>; FIELD defaults \
+            to the password (password, username, notes, totp or custom:<name>). Values go only to \
+            the child process. Items outside reveal_folders ask for confirmation first, and every \
+            item is written to the reveal audit log.\n\n\
+            Example: bitwarden-use run --env GH_TOKEN='github token' -- gh api user"
+    )]
+    Run {
+        #[arg(
+            long = "env",
+            value_name = "VAR=ITEM[#FIELD]",
+            required = true
+        )]
+        env: Vec<String>,
+        #[arg(long, help = "Folder name to search in")]
+        folder: Option<String>,
+        #[arg(last = true, required = true, value_name = "COMMAND")]
+        command: Vec<String>,
+    },
+
     #[command(about = "Search for entries")]
     Search {
         #[arg(help = "Search term to locate entries")]
@@ -304,6 +326,7 @@ impl Opt {
             Self::Sync => "sync".to_string(),
             Self::List { .. } => "list".to_string(),
             Self::Get { .. } => "get".to_string(),
+            Self::Run { .. } => "run".to_string(),
             Self::Search { .. } => "search".to_string(),
             Self::Code { .. } => "code".to_string(),
             Self::Add { .. } => "add".to_string(),
@@ -513,6 +536,11 @@ fn main() {
             reveal,
             codes,
         ),
+        Opt::Run {
+            env,
+            folder,
+            command,
+        } => commands::run(&env, folder.as_deref(), &command),
         Opt::Search {
             term,
             fields,

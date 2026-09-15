@@ -2272,6 +2272,175 @@ fn version_or_quit() -> anyhow::Result<u32> {
     })
 }
 
+impl DecryptedCipher {
+    /// One field's value for `run` (never printed). No field means the entry's main secret.
+    fn secret_value(&self, field: Option<&str>) -> anyhow::Result<String> {
+        let value = match (field, &self.data) {
+            (None, DecryptedData::Login { password, .. }) => password.clone(),
+            (None, DecryptedData::Card { number, .. }) => number.clone(),
+            (None, DecryptedData::SecureNote) => self.notes.clone(),
+            (None, _) => None,
+            (Some(f), data) => {
+                let custom = f.strip_prefix("custom:");
+                match (custom, f.parse::<Field>(), data) {
+                    (None, Ok(Field::Password), DecryptedData::Login { password, .. }) => {
+                        password.clone()
+                    }
+                    (None, Ok(Field::Username), DecryptedData::Login { username, .. }) => {
+                        username.clone()
+                    }
+                    (None, Ok(Field::Notes), _) => self.notes.clone(),
+                    (
+                        None,
+                        Ok(Field::Totp),
+                        DecryptedData::Login { totp: Some(totp), .. },
+                    ) => Some(generate_totp(totp)?),
+                    (None, Ok(_), _) => anyhow::bail!(
+                        "field '{f}' is not supported by run; use password, username, notes, totp or custom:<name>"
+                    ),
+                    _ => {
+                        let name = custom.unwrap_or(f);
+                        let hits: Vec<_> = self
+                            .fields
+                            .iter()
+                            .filter(|x| x.name.as_deref() == Some(name))
+                            .collect();
+                        anyhow::ensure!(
+                            hits.len() == 1,
+                            "custom field '{name}' missing or ambiguous"
+                        );
+                        hits[0].value.clone()
+                    }
+                }
+            }
+        };
+        value.filter(|v| !v.is_empty()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "entry '{}' has no {}",
+                self.name,
+                field.unwrap_or("password")
+            )
+        })
+    }
+}
+
+#[derive(Debug)]
+struct EnvSpec {
+    var: String,
+    needle: String,
+    field: Option<String>,
+}
+
+/// `VAR=ITEM[#FIELD]`; ITEM may be a name, URI, UUID or `bw:<uuid>`.
+fn parse_env_spec(spec: &str) -> anyhow::Result<EnvSpec> {
+    let (var, target) = spec.split_once('=').ok_or_else(|| {
+        anyhow::anyhow!("--env wants VAR=ITEM[#FIELD], got '{spec}'")
+    })?;
+    anyhow::ensure!(
+        !var.is_empty()
+            && !var.starts_with(|c: char| c.is_ascii_digit())
+            && var.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        "bad environment variable name '{var}'"
+    );
+    let target = target.strip_prefix("bw:").unwrap_or(target);
+    let (needle, field) = match target.rsplit_once('#') {
+        Some((n, f))
+            if f.starts_with("custom:") || f.parse::<Field>().is_ok() =>
+        {
+            (n, Some(f.to_string()))
+        }
+        _ => (target, None),
+    };
+    anyhow::ensure!(!needle.is_empty(), "empty item in '{spec}'");
+    Ok(EnvSpec {
+        var: var.to_string(),
+        needle: needle.to_string(),
+        field,
+    })
+}
+
+/// Run a command with vault secrets in its environment. Values go only to the child.
+pub fn run(
+    envs: &[String],
+    folder: Option<&str>,
+    command: &[String],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !command.is_empty(),
+        "nothing to run: put the command after --"
+    );
+    let specs = envs
+        .iter()
+        .map(|s| parse_env_spec(s))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    unlock()?;
+    let db = load_db()?;
+    let mut vars = Vec::with_capacity(specs.len());
+    for spec in &specs {
+        let needle =
+            parse_needle(&spec.needle).unwrap_or_else(|e| match e {});
+        let (_, decrypted) = find_entry(&db, needle, None, folder, false)
+            .with_context(|| {
+                format!("couldn't find entry for '{}'", spec.needle)
+            })?;
+        rbw::reveal::authorize(
+            "run",
+            &decrypted.name,
+            Some(&decrypted.id),
+            spec.field.as_deref(),
+            decrypted.folder.as_deref(),
+        )?;
+        vars.push((
+            spec.var.clone(),
+            decrypted.secret_value(spec.field.as_deref())?,
+        ));
+    }
+    let mut cmd = std::process::Command::new(&command[0]);
+    cmd.args(&command[1..]).envs(vars);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        let err = cmd.exec();
+        anyhow::bail!("couldn't run {}: {err}", command[0]);
+    }
+    #[cfg(not(unix))]
+    {
+        let status = cmd
+            .status()
+            .with_context(|| format!("couldn't run {}", command[0]))?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::*;
+
+    #[test]
+    fn env_spec_parsing() {
+        let s = parse_env_spec("PW=router").unwrap();
+        assert_eq!(
+            (s.var.as_str(), s.needle.as_str(), s.field),
+            ("PW", "router", None)
+        );
+        let s = parse_env_spec(
+            "TOKEN=bw:11111111-2222-3333-4444-555555555555#custom:api key",
+        )
+        .unwrap();
+        assert_eq!(s.needle, "11111111-2222-3333-4444-555555555555");
+        assert_eq!(s.field.as_deref(), Some("custom:api key"));
+        let s = parse_env_spec("U=github#username").unwrap();
+        assert_eq!(s.field.as_deref(), Some("username"));
+        let s = parse_env_spec("X=wifi #2").unwrap();
+        assert_eq!((s.needle.as_str(), s.field), ("wifi #2", None));
+        assert!(parse_env_spec("router").is_err());
+        assert!(parse_env_spec("1X=router").is_err());
+        assert!(parse_env_spec("A-B=router").is_err());
+        assert!(parse_env_spec("PW=").is_err());
+        assert!(parse_env_spec("PW=#password").is_err());
+    }
+}
+
 fn find_entry(
     db: &rbw::db::Db,
     mut needle: Needle,
