@@ -1,4 +1,4 @@
-# Unreleased
+# 0.5.0
 
 - `upgrade` (`--check`, `--json`): install the latest GitHub release through `install.sh` and refresh installed copies of the skill (Claude Code plugin, git checkout, copied folder). Exit 2 when the check or download fails.
 - Once-a-day stderr notice when a newer release exists (cache `~/.cache/bitwarden-use/update-check.json`, 2 s timeout; off with `CI`, `BITWARDEN_USE_NO_UPDATE_CHECK` or `USE_NO_UPDATE_CHECK`). Neither touches the vault or the agent.
