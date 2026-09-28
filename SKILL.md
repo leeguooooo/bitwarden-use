@@ -120,3 +120,14 @@ from the environment.
 - Default unlocking is interactive (pinentry); explicit `unlock --keychain` can use a previously
   enrolled entry. If a prompt blocks, let the user complete it rather than retrying.
 - `bitwarden-use help` / `bitwarden-use <cmd> --help` for the full surface (add/edit/generate/…).
+
+## Upgrade
+
+When any `bitwarden-use` command prints `bitwarden-use X is available`, tell the user and offer to
+run `bitwarden-use upgrade` (it updates the CLI and this skill; it never touches the vault and
+needs no unlock). Check without changing anything: `bitwarden-use upgrade --check`. The user may
+also just say "升级 bitwarden-use" / "upgrade bitwarden-use".
+
+If the skill came from somewhere `upgrade` can't refresh:
+- Claude Code plugin: `claude plugin update bitwarden-use@leeguooooo-plugins`
+- Whole family: `curl -fsSL https://raw.githubusercontent.com/leeguooooo/plugins/main/upgrade-use-family.sh | sh`
