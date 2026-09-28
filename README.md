@@ -67,6 +67,15 @@ require the
 program (to display password prompts). The installer also drops a short **`bwu`**
 symlink so you can type `bwu fido2 list` instead of the full name.
 
+**Upgrading** — `bitwarden-use upgrade` installs the latest release into the
+directory the running binary lives in (through `install.sh`) and refreshes
+installed copies of the agent skill. `upgrade --check` / `upgrade --json` only
+report. Once a day any command may print a one-line
+`bitwarden-use X is available` notice on stderr (cached in
+`~/.cache/bitwarden-use/update-check.json`, 2 s timeout); set
+`BITWARDEN_USE_NO_UPDATE_CHECK=1` (or the family-wide `USE_NO_UPDATE_CHECK=1`)
+to turn it off. Neither touches the vault or needs it unlocked.
+
 ## Configuration
 
 Configuration options are set using the `bitwarden-use config` command.

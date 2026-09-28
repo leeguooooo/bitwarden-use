@@ -6,6 +6,7 @@ use clap::{CommandFactory as _, Parser as _};
 mod actions;
 mod commands;
 mod sock;
+mod upgrade;
 
 #[derive(Debug, clap::Args)]
 struct FindArgs {
@@ -311,6 +312,22 @@ enum Opt {
         about = "Generate completion script for the given shell"
     )]
     GenCompletions { shell: CompletionShell },
+
+    #[command(
+        about = "Upgrade bitwarden-use to the latest release",
+        long_about = "Upgrade bitwarden-use to the latest GitHub release \
+            (through install.sh, into the directory this binary runs from) \
+            and refresh installed copies of the agent skill. Never touches \
+            the vault or the running agent.\n\n\
+            Exit codes: 0 success (also: already current, or a check that \
+            ran), 2 the check or download failed."
+    )]
+    Upgrade {
+        #[arg(long, help = "Only report current -> latest; change nothing")]
+        check: bool,
+        #[arg(long, help = "Like --check, as JSON (includes found skills)")]
+        json: bool,
+    },
 }
 
 impl Opt {
@@ -342,6 +359,7 @@ impl Opt {
             }
             Self::StopAgent => "stop-agent".to_string(),
             Self::GenCompletions { .. } => "gen-completions".to_string(),
+            Self::Upgrade { .. } => "upgrade".to_string(),
         }
     }
 }
@@ -459,6 +477,10 @@ impl Fido2 {
 
 fn main() {
     let opt = Opt::parse();
+
+    // Once-a-day "new version" line on stderr; never touches the vault.
+    // clap has already exited for --help / --version.
+    upgrade::maybe_notify(matches!(opt, Opt::Upgrade { .. }));
 
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info"),
@@ -676,6 +698,9 @@ fn main() {
             ),
         },
         Opt::StopAgent => commands::stop_agent(),
+        Opt::Upgrade { check, json } => {
+            std::process::exit(upgrade::run(check, json))
+        }
         Opt::GenCompletions { shell } => {
             match shell {
                 CompletionShell::Bash => {
@@ -782,6 +807,9 @@ mod cli_tests {
             ],
             vec!["bwu", "unlock", "--keychain"],
             vec!["bwu", "edit", "item", "--allow-empty", "--yes"],
+            vec!["bwu", "upgrade"],
+            vec!["bwu", "upgrade", "--check"],
+            vec!["bwu", "upgrade", "--json"],
         ] {
             assert!(Opt::try_parse_from(args).is_ok());
         }
