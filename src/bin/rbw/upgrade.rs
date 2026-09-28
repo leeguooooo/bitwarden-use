@@ -92,9 +92,15 @@ fn write_cache(path: &Path, cache: &CheckCache) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(cache)?)?;
-    std::fs::rename(tmp, path)
+    // Per-process temp name: parallel invocations (agents often run several
+    // at once) must not truncate each other's half-written temp file.
+    let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    let res = std::fs::write(&tmp, serde_json::to_vec(cache)?)
+        .and_then(|()| std::fs::rename(&tmp, path));
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
 }
 
 /// Fresh = checked within the last 24 h. A timestamp in the future (clock
@@ -196,15 +202,24 @@ fn fetch_latest(timeout: Duration) -> anyhow::Result<String> {
         .connect_timeout(timeout)
         .user_agent(concat!("bitwarden-use/", env!("CARGO_PKG_VERSION")))
         .build()?;
+    let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
+    let token = env_nonempty("GITHUB_TOKEN");
     let mut req = client
-        .get(format!(
-            "https://api.github.com/repos/{REPO}/releases/latest"
-        ))
+        .get(&url)
         .header("Accept", "application/vnd.github+json");
-    if let Some(token) = env_nonempty("GITHUB_TOKEN") {
+    if let Some(token) = &token {
         req = req.bearer_auth(token.to_string_lossy());
     }
-    let resp = req.send()?.error_for_status()?;
+    let mut resp = req.send()?;
+    // An expired or foreign GITHUB_TOKEN must not break the check: the
+    // endpoint is public, so retry once anonymously.
+    if token.is_some() && resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        resp = client
+            .get(&url)
+            .header("Accept", "application/vnd.github+json")
+            .send()?;
+    }
+    let resp = resp.error_for_status()?;
     let body: serde_json::Value = resp.json()?;
     parse_release(&body)
 }
@@ -376,6 +391,8 @@ pub fn refresh_skill(
         "git" => match std::process::Command::new("git")
             .args(["-C", &skill.path, "pull", "--ff-only", "--quiet"])
             .stdin(std::process::Stdio::null())
+            // Never block on a credential prompt (private remote, no helper).
+            .env("GIT_TERMINAL_PROMPT", "0")
             .output()
         {
             Ok(o) if o.status.success() => "pulled".to_string(),
