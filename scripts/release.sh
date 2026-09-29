@@ -7,6 +7,11 @@
 #   scripts/release.sh [--dry-run] 0.5.1
 # --dry-run: preflight + checks + show the bump diff, then revert. Nothing is committed or pushed.
 set -eu
+run_ok() {  # run_ok <run-id> [-R owner/repo]: wait until the run completes (gh run watch can drop on a network error), then require success
+  _r=$1; shift
+  until [ "$(gh run view "$_r" "$@" --json status -q .status 2>/dev/null)" = completed ]; do gh run watch "$_r" "$@" >/dev/null 2>&1 || sleep 15; done
+  [ "$(gh run view "$_r" "$@" --json conclusion -q .conclusion)" = success ]
+}
 DRY=0 V=
 for a in "$@"; do
   case $a in --dry-run) DRY=1 ;; -*) V= ; break ;; *) V=${a#v} ;; esac
@@ -66,7 +71,7 @@ while [ -z "$RUN" ]; do
   RUN=$(gh run list -w release.yml -b "v$V" -e push -L 1 --json databaseId -q '.[0].databaseId')
 done
 echo "waiting for release build: $(gh run view "$RUN" --json url -q .url)"
-gh run watch "$RUN" --interval 30 --exit-status >/dev/null || stuck "release build failed (gh run view $RUN --log-failed)"
+run_ok "$RUN" || stuck "release build failed (gh run view $RUN --log-failed)"
 gh release view "v$V" --json url -q .url
 
 # Never rebase here: the tag would then point at a commit that is not on main.
@@ -75,6 +80,6 @@ git push -q origin main || die "push of main failed (main moved?). Run: git pull
 gh workflow run auto-sync-versions.yml -R "$MARKETPLACE"
 sleep 5
 RUN=$(gh run list -R "$MARKETPLACE" -w auto-sync-versions.yml -e workflow_dispatch -L 1 --json databaseId -q '.[0].databaseId')
-gh run watch "$RUN" -R "$MARKETPLACE" --exit-status >/dev/null && echo "marketplace synced" || echo "warn: marketplace sync run $RUN failed; the hourly run will retry"
+run_ok "$RUN" -R "$MARKETPLACE" && echo "marketplace synced" || echo "warn: marketplace sync run $RUN failed; the hourly run will retry"
 gh api "repos/$MARKETPLACE/contents/.claude-plugin/marketplace.json" -q .content | base64 -d \
   | python3 -c "import json,sys; print('marketplace $PLUGIN:', next(p['version'] for p in json.load(sys.stdin)['plugins'] if p['name']=='$PLUGIN'))"
