@@ -111,9 +111,17 @@ fn failed_install_keeps_the_old_binary() {
 
 #[test]
 fn wrong_version_after_install_is_not_success() {
+    // Staged + renamed like the real installer: writing over the running
+    // executable in place fails on Linux (ETXTBSY).
     let f = fixture(
         true,
-        "#!/bin/sh\nprintf '#!/bin/sh\\necho bitwarden-use 1.0.0\\n' > \"$BITWARDEN_INSTALL_DIR/bitwarden-use\"\n",
+        r#"#!/bin/sh
+set -eu
+d="$BITWARDEN_INSTALL_DIR"
+printf '#!/bin/sh\necho bitwarden-use 1.0.0\n' > "$d/.new"
+chmod +x "$d/.new"
+mv -f "$d/.new" "$d/bitwarden-use"
+"#,
     );
     let out = run(&f, &["--tag", "v9.9.9"]);
     assert_eq!(out.status.code(), Some(1));
