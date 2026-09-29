@@ -61,6 +61,8 @@ version with `BITWARDEN_VERSION=v0.1.0`.
 cargo install --locked --path .
 ```
 
+Maintainers release with `scripts/release.sh 0.5.1`: it bumps the version, pushes the tag, waits for the release build and syncs the plugin marketplace (`--dry-run` to preview).
+
 Both paths produce the two binaries `bitwarden-use` and `bitwarden-use-agent` and
 require the
 [`pinentry`](https://www.gnupg.org/related_software/pinentry/index.en.html)
