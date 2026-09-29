@@ -1,4 +1,4 @@
-# Unreleased
+# 0.6.0
 
 - `upgrade`: skill copies are refreshed only with `--skills` (listed otherwise); `--tag vX.Y.Z` pins a version (downgrade allowed); refuses without changing anything when the binary came from cargo, Homebrew, a source build or a directory `install.sh` did not lay out (exit 1); checks the installed `--version` afterwards; reports whether an agent is running (pidfile only) and that it keeps the old version until `stop-agent`. `--json` adds `install_channel`, `agent` and `target`.
 
