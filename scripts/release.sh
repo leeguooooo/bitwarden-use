@@ -1,8 +1,9 @@
 #!/bin/sh
 # Release bitwarden-use: bump Cargo.toml/Cargo.lock (skipped when a feature commit already did),
-# run the fast checks, commit "chore(release): vX.Y.Z", push main and the tag, wait for
-# release.yml to build and publish the GitHub Release, then sync the plugin marketplace so
-# Claude Code plugin installs pick the new version up right away.
+# run the fast checks, commit "chore(release): vX.Y.Z", push only the tag, wait for release.yml to
+# build and publish the GitHub Release, then push main and sync the plugin marketplace so Claude Code
+# plugin installs pick the new version up right away. main goes last because the marketplace reads
+# the version from Cargo.toml on main: pushed earlier, an hourly sync could ship it before the binaries.
 #   scripts/release.sh [--dry-run] 0.5.1
 # --dry-run: preflight + checks + show the bump diff, then revert. Nothing is committed or pushed.
 set -eu
@@ -37,26 +38,39 @@ echo "checks passed"
 if [ "$DRY" = 1 ]; then
   git --no-pager diff -U0 -- Cargo.toml Cargo.lock
   git diff --quiet && echo "Cargo.toml is already at $V: only the tag would be pushed"
-  echo "dry run: would commit the bump (if any), tag and push main + v$V, wait for release.yml, sync $MARKETPLACE"
+  echo "dry run: would commit the bump (if any), push tag v$V, wait for release.yml, then push main and sync $MARKETPLACE"
   exit 0
 fi
 
 git diff --quiet || git commit -qm "chore(release): v$V" -- Cargo.toml Cargo.lock
 trap - EXIT
 git tag "v$V"
-git push -q origin main "v$V"
+git push -q origin "v$V"
 
-# release.yml builds four targets and publishes the Release on the tag push; the plugin must not
-# update before its binaries exist.
+# release.yml checks out and publishes the tag itself, so main can wait until the binaries exist.
+SYNC="gh workflow run auto-sync-versions.yml -R $MARKETPLACE"
+stuck() {
+  cat >&2 <<EOF
+error: $1 - main was NOT pushed.
+  retry:   gh run rerun $RUN --failed && gh run watch $RUN --exit-status
+           then: git push origin main && $SYNC
+  abandon: gh release delete v$V --yes 2>/dev/null; git push origin :refs/tags/v$V
+           git tag -d v$V && git reset --hard origin/main
+EOF
+  exit 1
+}
 RUN='' i=0
 while [ -z "$RUN" ]; do
-  i=$((i + 1)); [ $i -le 30 ] || die "no release.yml run for v$V after 5 min"
+  i=$((i + 1)); [ $i -le 30 ] || { RUN='<run-id>'; stuck "no release.yml run for v$V after 5 min"; }
   sleep 10
   RUN=$(gh run list -w release.yml -b "v$V" -e push -L 1 --json databaseId -q '.[0].databaseId')
 done
 echo "waiting for release build: $(gh run view "$RUN" --json url -q .url)"
-gh run watch "$RUN" --interval 30 --exit-status >/dev/null || die "release build failed: gh run view $RUN --log-failed"
+gh run watch "$RUN" --interval 30 --exit-status >/dev/null || stuck "release build failed (gh run view $RUN --log-failed)"
 gh release view "v$V" --json url -q .url
+
+# Never rebase here: the tag would then point at a commit that is not on main.
+git push -q origin main || die "push of main failed (main moved?). Run: git pull --no-rebase && git push origin main && $SYNC"
 
 gh workflow run auto-sync-versions.yml -R "$MARKETPLACE"
 sleep 5
