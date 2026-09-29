@@ -15,4 +15,5 @@ jobs:
       - run: cargo test --locked --lib --bins
       - run: cargo test --locked --no-default-features --bin bitwarden-use cli_tests
       - run: cargo test --locked --test upgrade_notice
+      - run: cargo test --locked --test upgrade_flow
       - run: python3 tools/test_install.py

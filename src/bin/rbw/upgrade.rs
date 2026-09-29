@@ -3,7 +3,11 @@
 //!
 //! Nothing here talks to the agent, reads the config or touches the vault:
 //! the only state is `${XDG_CACHE_HOME:-~/.cache}/bitwarden-use/
-//! update-check.json`, and the only network call is the GitHub releases API.
+//! update-check.json`, the only network call is the GitHub releases API, and
+//! whether an agent is running is read from its pidfile (signal 0), never
+//! asked over its socket. Binaries are installed only through install.sh
+//! (sha256-verified, staged, swapped in by rename); skill copies are touched
+//! only with `--skills`.
 
 use std::ffi::OsString;
 use std::io::Write as _;
@@ -233,13 +237,41 @@ pub struct Skill {
     pub update: String,
 }
 
+/// How the running binary was installed, and whether `upgrade` may replace
+/// it (`--json`: `install_channel`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct InstallChannel {
+    pub channel: &'static str,
+    pub path: String,
+    pub upgradable: bool,
+    pub hint: String,
+}
+
+/// Whether a `bitwarden-use-agent` is running (`--json`: `agent`). Read from
+/// the agent's pidfile only; nothing is sent to the agent.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AgentState {
+    pub running: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<i32>,
+    pub note: String,
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct Report {
     pub name: &'static str,
     pub current: String,
     pub latest: String,
     pub update_available: bool,
+    /// The version `upgrade` would install when it differs from `latest`
+    /// (`--tag`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     pub skills: Vec<Skill>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub install_channel: Option<InstallChannel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentState>,
 }
 
 pub fn report(current: &str, latest: &str, skills: Vec<Skill>) -> Report {
@@ -248,7 +280,10 @@ pub fn report(current: &str, latest: &str, skills: Vec<Skill>) -> Report {
         current: current.to_string(),
         latest: latest.to_string(),
         update_available: is_newer(latest, current),
+        target: None,
         skills,
+        install_channel: None,
+        agent: None,
     }
 }
 
@@ -257,6 +292,15 @@ pub fn check_line(current: &str, latest: &str) -> String {
         format!("{NAME} {current} -> {latest}")
     } else {
         format!("{NAME} {current} is up to date")
+    }
+}
+
+/// `--check` with `--tag`: the pinned version may be older (a downgrade).
+pub fn pinned_line(current: &str, target: &str) -> String {
+    if parse_version(current) == parse_version(target) {
+        format!("{NAME} {current} is already {target}")
+    } else {
+        format!("{NAME} {current} -> {target} (pinned with --tag)")
     }
 }
 
@@ -299,6 +343,23 @@ fn git_toplevel(dir: &Path) -> Option<PathBuf> {
     (!top.is_empty()).then(|| PathBuf::from(top))
 }
 
+/// The git work tree that belongs to this skill, if any: the skill folder is
+/// the checkout itself, or the skills link points into a separate checkout.
+/// When the skills directory itself sits inside the work tree (a dotfiles
+/// repo tracking `~` or `~/.claude`), pulling would move someone else's
+/// repository, so it does not count.
+fn owned_git_root(resolved: &Path, skills_dir: &Path) -> Option<PathBuf> {
+    let root = git_toplevel(resolved)?;
+    let root_real =
+        std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+    if root_real == resolved {
+        return Some(root);
+    }
+    let skills_real = std::fs::canonicalize(skills_dir)
+        .unwrap_or_else(|_| skills_dir.to_path_buf());
+    (!skills_real.starts_with(&root_real)).then_some(root)
+}
+
 /// Every place this skill is installed, per the convention's channel table.
 pub fn find_skills(home: &Path) -> Vec<Skill> {
     let mut skills = vec![];
@@ -327,7 +388,7 @@ pub fn find_skills(home: &Path) -> Vec<Skill> {
         {
             continue;
         }
-        if let Some(root) = git_toplevel(&resolved) {
+        if let Some(root) = owned_git_root(&resolved, &home.join(dir)) {
             if !seen.contains(&root) {
                 skills.push(Skill {
                     channel: "git",
@@ -363,29 +424,39 @@ fn find_on_path(
         .find(|p| p.is_file())
 }
 
-/// Refreshes one skill; returns a one-line human result.
+/// Refreshes one skill; returns whether it is now current (or needs the
+/// user, which is not a failure) and a one-line human result.
 pub fn refresh_skill(
     skill: &Skill,
     path_env: Option<&std::ffi::OsStr>,
-) -> String {
+) -> (bool, String) {
     match skill.channel {
         "claude-plugin" => {
             let Some(claude) = find_on_path("claude", path_env) else {
-                return format!("run: {}", skill.update);
+                return (true, format!("run: {}", skill.update));
             };
             match std::process::Command::new(claude)
                 .args(["plugin", "update", PLUGIN])
+                .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status()
             {
-                Ok(s) if s.success() => "updated".to_string(),
-                Ok(s) => {
-                    format!("{} failed ({s}); run it by hand", skill.update)
-                }
-                Err(e) => {
-                    format!("could not run claude ({e}): {}", skill.update)
-                }
+                Ok(s) if s.success() => (
+                    true,
+                    format!(
+                        "updated ({}; restart Claude Code or /reload-plugins)",
+                        skill.update
+                    ),
+                ),
+                Ok(s) => (
+                    false,
+                    format!("{} failed ({s}); run it by hand", skill.update),
+                ),
+                Err(e) => (
+                    false,
+                    format!("could not run claude ({e}): {}", skill.update),
+                ),
             }
         }
         "git" => match std::process::Command::new("git")
@@ -395,7 +466,7 @@ pub fn refresh_skill(
             .env("GIT_TERMINAL_PROMPT", "0")
             .output()
         {
-            Ok(o) if o.status.success() => "pulled".to_string(),
+            Ok(o) if o.status.success() => (true, "pulled".to_string()),
             Ok(o) => {
                 let why = String::from_utf8_lossy(&o.stderr);
                 let why = why
@@ -404,11 +475,46 @@ pub fn refresh_skill(
                     .find(|l| !l.is_empty())
                     .unwrap_or("")
                     .to_string();
-                format!("not updated, git pull --ff-only failed: {why}")
+                (
+                    false,
+                    format!("not updated, git pull --ff-only failed: {why}"),
+                )
             }
-            Err(e) => format!("not updated, could not run git: {e}"),
+            Err(e) => (false, format!("not updated, could not run git: {e}")),
         },
-        _ => format!("run: {}", skill.update),
+        // A copied folder may carry local edits; `npx skills` owns it.
+        _ => (true, format!("run: {}", skill.update)),
+    }
+}
+
+// ---------------------------------------------------------------- agent
+
+/// Reads the agent's pidfile and asks the kernel whether that process is
+/// alive (signal 0). Never connects to the agent's socket.
+pub fn agent_state(pidfile: &Path) -> AgentState {
+    let pid = std::fs::read_to_string(pidfile)
+        .ok()
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .filter(|p| *p > 0)
+        .filter(|p| {
+            rustix::process::Pid::from_raw(*p).is_some_and(|pid| {
+                rustix::process::test_kill_process(pid).is_ok()
+            })
+        });
+    let note = if pid.is_some() {
+        format!(
+            "a running {NAME}-agent keeps its old version until it restarts; \
+             `{NAME} stop-agent` restarts it on the next command (this locks \
+             the vault, so you unlock again)"
+        )
+    } else {
+        "no agent running; the next command starts the installed one"
+            .to_string()
+    };
+    AgentState {
+        running: pid.is_some(),
+        pid,
+        note,
     }
 }
 
@@ -416,14 +522,28 @@ pub fn refresh_skill(
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Route {
-    /// Release binary from install.sh (or unpacked by hand) in this dir.
+    /// Release layout from install.sh (the CLI and bitwarden-use-agent side
+    /// by side) in this dir.
     Installer(PathBuf),
     /// `cargo install` into ~/.cargo/bin.
     Cargo,
     /// A `target/{debug,release}` build from a checkout.
     Source(PathBuf),
+    /// Installed by Homebrew (a Cellar / Homebrew prefix path).
+    Homebrew(PathBuf),
+    /// Not a layout this command installed; overwriting it could clobber a
+    /// package manager's or a hand-made install.
+    Unknown(PathBuf),
 }
 
+fn is_homebrew(exe: &Path) -> bool {
+    exe.components().any(|c| c.as_os_str() == "Cellar")
+        || ["/opt/homebrew/", "/home/linuxbrew/", "/usr/local/Homebrew/"]
+            .iter()
+            .any(|p| exe.starts_with(p))
+}
+
+/// `exe` is the canonical path of the running binary.
 pub fn install_route(exe: &Path, cargo_bin: Option<&Path>) -> Route {
     let dir = exe.parent().unwrap_or_else(|| Path::new("."));
     let comps: Vec<_> =
@@ -435,10 +555,63 @@ pub fn install_route(exe: &Path, cargo_bin: Option<&Path>) -> Route {
     if in_target {
         return Route::Source(exe.to_path_buf());
     }
+    if is_homebrew(exe) {
+        return Route::Homebrew(exe.to_path_buf());
+    }
     if cargo_bin.is_some_and(|c| dir == c) {
         return Route::Cargo;
     }
-    Route::Installer(dir.to_path_buf())
+    if dir.join(format!("{NAME}-agent")).is_file() {
+        return Route::Installer(dir.to_path_buf());
+    }
+    Route::Unknown(dir.to_path_buf())
+}
+
+pub fn install_channel(route: &Route, target: &str) -> InstallChannel {
+    match route {
+        Route::Installer(dir) => InstallChannel {
+            channel: "installer",
+            path: dir.display().to_string(),
+            upgradable: true,
+            hint: format!(
+                "{NAME} upgrade (runs install.sh into {})",
+                dir.display()
+            ),
+        },
+        Route::Cargo => InstallChannel {
+            channel: "cargo",
+            path: cargo_bin()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default(),
+            upgradable: false,
+            hint: format!(
+                "cargo install --locked --git https://github.com/{REPO} \
+                 --tag v{target}"
+            ),
+        },
+        Route::Source(exe) => InstallChannel {
+            channel: "source",
+            path: exe.display().to_string(),
+            upgradable: false,
+            hint: "pull the checkout and rebuild".to_string(),
+        },
+        Route::Homebrew(exe) => InstallChannel {
+            channel: "homebrew",
+            path: exe.display().to_string(),
+            upgradable: false,
+            hint: format!("brew upgrade {NAME}"),
+        },
+        Route::Unknown(dir) => InstallChannel {
+            channel: "unknown",
+            path: dir.display().to_string(),
+            upgradable: false,
+            hint: format!(
+                "no {NAME}-agent next to this binary, so it was not put \
+                 there by install.sh; update it the way you installed it, \
+                 or reinstall with: curl -fsSL {INSTALL_SCRIPT} | sh"
+            ),
+        },
+    }
 }
 
 fn cargo_bin() -> Option<PathBuf> {
@@ -451,10 +624,16 @@ fn cargo_bin() -> Option<PathBuf> {
         .and_then(|p| std::fs::canonicalize(p).ok())
 }
 
-/// Runs the repo's install.sh pinned to `v<latest>` into `dir`. The script
+/// Runs the repo's install.sh pinned to `v<target>` into `dir`. The script
 /// is downloaded to a temp file first so a failed download can't be mistaken
-/// for a successful empty script.
-fn run_installer(dir: &Path, latest: &str) -> anyhow::Result<()> {
+/// for a successful empty script. install.sh refuses a missing or wrong
+/// sha256, validates both binaries, and swaps them in by rename, so on any
+/// failure the installed pair is left as it was.
+fn run_installer(dir: &Path, target: &str) -> anyhow::Result<()> {
+    let script = env_nonempty("BITWARDEN_USE_INSTALLER_URL").map_or_else(
+        || INSTALL_SCRIPT.to_string(),
+        |s| s.to_string_lossy().into_owned(),
+    );
     let status = std::process::Command::new("sh")
         .arg("-c")
         .arg(
@@ -462,9 +641,9 @@ fn run_installer(dir: &Path, latest: &str) -> anyhow::Result<()> {
              curl -fsSL \"$1\" -o \"$t\"; sh \"$t\"",
         )
         .arg("sh")
-        .arg(INSTALL_SCRIPT)
+        .arg(script)
         .env("BITWARDEN_INSTALL_DIR", dir)
-        .env("BITWARDEN_VERSION", format!("v{latest}"))
+        .env("BITWARDEN_VERSION", format!("v{target}"))
         .stdin(std::process::Stdio::null())
         // install.sh reports progress on stderr and ends with a --version
         // line on stdout; keep our stdout for the summary.
@@ -475,13 +654,61 @@ fn run_installer(dir: &Path, latest: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `bitwarden-use upgrade [--check] [--json]`. Returns the exit code:
-/// 0 on success (including "already current"), 2 when the check or the
-/// download failed.
-pub fn run(check: bool, json: bool) -> i32 {
+/// `X.Y.Z` from `<bin> --version` ("bitwarden-use X.Y.Z").
+fn installed_version(bin: &Path) -> Option<String> {
+    let out = std::process::Command::new(bin)
+        .arg("--version")
+        .env("BITWARDEN_USE_NO_UPDATE_CHECK", "1")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    let (a, b, c) = parse_version(text.split_whitespace().last()?)?;
+    Some(format!("{a}.{b}.{c}"))
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Options {
+    pub check: bool,
+    pub json: bool,
+    /// Also refresh this tool's own skill copies.
+    pub skills: bool,
+    /// Install exactly this version (`X.Y.Z` or `vX.Y.Z`).
+    pub tag: Option<String>,
+}
+
+/// `bitwarden-use upgrade [--check] [--json] [--skills] [--tag vX.Y.Z]`.
+/// Returns the exit code: 0 on success (including "already current"), 2 when
+/// the check or the download failed, 1 when the install channel is not ours
+/// (nothing changed) or the upgrade did not finish.
+pub fn run(opts: &Options) -> i32 {
     let current = current_version();
+    let pinned = match opts.tag.as_deref().map(parse_version) {
+        None => None,
+        Some(Some((a, b, c))) => Some(format!("{a}.{b}.{c}")),
+        Some(None) => {
+            eprintln!(
+                "{NAME} upgrade: --tag wants a release version like v0.5.0"
+            );
+            return 2;
+        }
+    };
     let latest = match fetch_latest(UPGRADE_TIMEOUT) {
-        Ok(v) => v,
+        Ok(v) => {
+            if let Some(path) = cache_file(|k| std::env::var_os(k)) {
+                let _ = write_cache(
+                    &path,
+                    &CheckCache {
+                        checked_at: now_unix(),
+                        latest: Some(v.clone()),
+                    },
+                );
+            }
+            v
+        }
+        // A pinned install does not need to know the newest release.
+        Err(_) if pinned.is_some() => String::new(),
         Err(e) => {
             eprintln!(
                 "{NAME} upgrade: could not get the latest release: {e:#}"
@@ -489,20 +716,26 @@ pub fn run(check: bool, json: bool) -> i32 {
             return 2;
         }
     };
-    if let Some(path) = cache_file(|k| std::env::var_os(k)) {
-        let _ = write_cache(
-            &path,
-            &CheckCache {
-                checked_at: now_unix(),
-                latest: Some(latest.clone()),
-            },
-        );
-    }
+    let target = pinned.clone().unwrap_or_else(|| latest.clone());
+    let wants_install = pinned.as_deref().map_or_else(
+        || is_newer(&latest, current),
+        |t| parse_version(t) != parse_version(current),
+    );
+
     let home = env_nonempty("HOME").map(PathBuf::from);
     let skills = home.as_deref().map(find_skills).unwrap_or_default();
+    let exe = std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .unwrap_or_else(|_| PathBuf::from(NAME));
+    let route = install_route(&exe, cargo_bin().as_deref());
+    let channel = install_channel(&route, &target);
+    let agent = agent_state(&rbw::dirs::pid_file());
 
-    if json {
-        let r = report(current, &latest, skills);
+    if opts.json {
+        let mut r = report(current, &latest, skills);
+        r.target = pinned.filter(|t| *t != latest);
+        r.install_channel = Some(channel);
+        r.agent = Some(agent);
         match serde_json::to_string_pretty(&r) {
             Ok(s) => println!("{s}"),
             Err(e) => {
@@ -512,66 +745,101 @@ pub fn run(check: bool, json: bool) -> i32 {
         }
         return 0;
     }
-    if check {
-        println!("{}", check_line(current, &latest));
+    let mut out = std::io::stdout().lock();
+    if opts.check {
+        let line = pinned.as_deref().map_or_else(
+            || check_line(current, &latest),
+            |t| pinned_line(current, t),
+        );
+        let _ = writeln!(out, "{line}");
+        if wants_install && !channel.upgradable {
+            let _ = writeln!(
+                out,
+                "installed via {}; upgrade with: {}",
+                channel.channel, channel.hint
+            );
+        }
+        for skill in &skills {
+            let _ = writeln!(
+                out,
+                "skill ({}) {}: refresh with --skills or: {}",
+                skill.channel, skill.path, skill.update
+            );
+        }
         return 0;
     }
 
-    let mut out = std::io::stdout().lock();
-    if is_newer(&latest, current) {
-        let exe = std::env::current_exe()
-            .and_then(std::fs::canonicalize)
-            .unwrap_or_else(|_| PathBuf::from(NAME));
-        match install_route(&exe, cargo_bin().as_deref()) {
-            Route::Installer(dir) => {
-                if let Err(e) = run_installer(&dir, &latest) {
-                    eprintln!("{NAME} upgrade: {e:#}");
-                    return 2;
-                }
+    let mut code = 0;
+    if !wants_install {
+        let line = pinned.as_deref().map_or_else(
+            || check_line(current, &latest),
+            |t| pinned_line(current, t),
+        );
+        let _ = writeln!(out, "{line}");
+    } else if let Route::Installer(dir) = &route {
+        if let Err(e) = run_installer(dir, &target) {
+            eprintln!(
+                "{NAME} upgrade: {e:#}; the installed {current} is unchanged"
+            );
+            return 2;
+        }
+        let bin = dir.join(NAME);
+        match installed_version(&bin) {
+            Some(v) if v == target => {
                 let _ = writeln!(
                     out,
-                    "{NAME} {current} -> {latest} (installed to {})",
+                    "{NAME} {current} -> {target} (installed to {})",
                     dir.display()
                 );
-                let _ = writeln!(
-                    out,
-                    "note: a running {NAME}-agent keeps the old version \
-                     until it next restarts"
-                );
+                if agent.running {
+                    let _ = writeln!(out, "agent: {}", agent.note);
+                }
             }
-            Route::Cargo => {
-                let _ = writeln!(
-                    out,
-                    "{NAME} {current} -> {latest} available; installed \
-                     with cargo, run: cargo install --locked --git \
-                     https://github.com/{REPO} --tag v{latest}"
+            got => {
+                eprintln!(
+                    "{NAME} upgrade: install.sh finished but {} reports {}; \
+                     expected {target}. Check which {NAME} is first on PATH, \
+                     or reinstall: curl -fsSL {INSTALL_SCRIPT} | sh",
+                    bin.display(),
+                    got.as_deref().unwrap_or("no version")
                 );
-            }
-            Route::Source(exe) => {
-                let _ = writeln!(
-                    out,
-                    "{NAME} {current} -> {latest} available; {} is a \
-                     source build, pull the checkout and rebuild",
-                    exe.display()
-                );
+                code = 1;
             }
         }
     } else {
-        let _ = writeln!(out, "{}", check_line(current, &latest));
+        let _ = writeln!(
+            out,
+            "{NAME} {current} -> {target} available, but this binary was \
+             installed via {} ({}); not replacing it. Upgrade with: {}",
+            channel.channel, channel.path, channel.hint
+        );
+        code = 1;
+    }
+
+    if skills.is_empty() {
+        let _ = writeln!(out, "skill: no installed copy found");
     }
     let path_env = std::env::var_os("PATH");
     for skill in &skills {
-        let result = refresh_skill(skill, path_env.as_deref());
-        let _ = writeln!(
-            out,
-            "skill ({}) {}: {result}",
-            skill.channel, skill.path
-        );
+        if opts.skills {
+            let (ok, result) = refresh_skill(skill, path_env.as_deref());
+            if !ok && code == 0 {
+                code = 1;
+            }
+            let _ = writeln!(
+                out,
+                "skill ({}) {}: {result}",
+                skill.channel, skill.path
+            );
+        } else {
+            let _ = writeln!(
+                out,
+                "skill ({}) {}: not refreshed; pass --skills or run: {}",
+                skill.channel, skill.path, skill.update
+            );
+        }
     }
-    if skills.is_empty() {
-        let _ = writeln!(out, "skill: no installed copy found to refresh");
-    }
-    0
+    code
 }
 
 #[cfg(test)]
@@ -853,9 +1121,9 @@ mod tests {
             assert_eq!(channels, ["claude-plugin", "copied", "git"]);
             assert_eq!(skills[2].path, repo.display().to_string());
             // No remote: pull fails, is reported, nothing is forced.
-            assert!(
-                refresh_skill(&skills[2], None).starts_with("not updated")
-            );
+            let (ok, line) = refresh_skill(&skills[2], None);
+            assert!(!ok);
+            assert!(line.starts_with("not updated"), "{line}");
         } else {
             assert_eq!(channels, ["claude-plugin", "copied", "copied"]);
         }
@@ -866,23 +1134,91 @@ mod tests {
         std::fs::create_dir_all(&empty).unwrap();
         assert_eq!(
             refresh_skill(&skills[0], Some(empty.as_os_str())),
-            "run: claude plugin update bitwarden-use@leeguooooo-plugins"
+            (
+                true,
+                "run: claude plugin update bitwarden-use@leeguooooo-plugins"
+                    .to_string()
+            )
         );
+        // A copied folder is never rewritten (it may carry local edits).
         assert_eq!(
             refresh_skill(&skills[1], None),
-            "run: npx skills update bitwarden-use"
+            (true, "run: npx skills update bitwarden-use".to_string())
+        );
+        assert_eq!(
+            std::fs::read_to_string(copied.join("SKILL.md")).unwrap(),
+            "x"
         );
     }
 
     #[test]
-    fn install_routes() {
-        let cargo = Path::new("/home/u/.cargo/bin");
+    fn enclosing_repo_is_not_the_skills_checkout() {
+        // A dotfiles repo tracking ~/.claude: pulling it would move someone
+        // else's repository, so the skill folder counts as a plain copy.
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let claude = home.join(".claude");
+        let skill = claude.join("skills/bitwarden-use");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "x").unwrap();
+        let ok = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .arg(&claude)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok {
+            return;
+        }
+        let skills = find_skills(&home);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].channel, "copied");
+    }
+
+    #[test]
+    fn pinned_versions() {
         assert_eq!(
-            install_route(
-                Path::new("/home/u/.local/bin/bitwarden-use"),
-                Some(cargo)
-            ),
-            Route::Installer(PathBuf::from("/home/u/.local/bin"))
+            pinned_line("0.5.0", "0.4.0"),
+            "bitwarden-use 0.5.0 -> 0.4.0 (pinned with --tag)"
+        );
+        assert_eq!(
+            pinned_line("0.5.0", "0.5.0"),
+            "bitwarden-use 0.5.0 is already 0.5.0"
+        );
+    }
+
+    #[test]
+    fn agent_state_from_pidfile() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pidfile");
+        assert!(!agent_state(&pidfile).running);
+        std::fs::write(&pidfile, format!("{}\n", std::process::id()))
+            .unwrap();
+        let st = agent_state(&pidfile);
+        assert!(st.running);
+        assert!(st.note.contains("stop-agent"));
+        // Stale pidfile (no such process) and garbage are "not running".
+        std::fs::write(&pidfile, "2147483646\n").unwrap();
+        assert!(!agent_state(&pidfile).running);
+        std::fs::write(&pidfile, "nope").unwrap();
+        assert!(!agent_state(&pidfile).running);
+    }
+
+    #[test]
+    fn install_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().canonicalize().unwrap().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("bitwarden-use"), "").unwrap();
+        let cargo = Path::new("/home/u/.cargo/bin");
+        // Only a CLI without the agent next to it: not install.sh's layout.
+        assert_eq!(
+            install_route(&bin.join("bitwarden-use"), Some(cargo)),
+            Route::Unknown(bin.clone())
+        );
+        std::fs::write(bin.join("bitwarden-use-agent"), "").unwrap();
+        assert_eq!(
+            install_route(&bin.join("bitwarden-use"), Some(cargo)),
+            Route::Installer(bin.clone())
         );
         assert_eq!(
             install_route(
@@ -900,5 +1236,35 @@ mod tests {
                 "/src/bwu/target/release/bitwarden-use"
             ))
         );
+        for brew in [
+            "/opt/homebrew/Cellar/bitwarden-use/0.5.0/bin/bitwarden-use",
+            "/usr/local/Cellar/bitwarden-use/0.5.0/bin/bitwarden-use",
+            "/home/linuxbrew/.linuxbrew/bin/bitwarden-use",
+        ] {
+            assert_eq!(
+                install_route(Path::new(brew), Some(cargo)),
+                Route::Homebrew(PathBuf::from(brew)),
+                "{brew}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_installer_route_is_upgradable() {
+        let c = install_channel(&Route::Installer("/b".into()), "0.6.0");
+        assert!(c.upgradable);
+        assert_eq!(c.channel, "installer");
+        let c = install_channel(&Route::Homebrew("/x".into()), "0.6.0");
+        assert!(!c.upgradable);
+        assert_eq!(c.hint, "brew upgrade bitwarden-use");
+        let c = install_channel(&Route::Cargo, "0.6.0");
+        assert!(!c.upgradable);
+        assert!(c.hint.ends_with("--tag v0.6.0"), "{}", c.hint);
+        assert!(
+            !install_channel(&Route::Source("/s".into()), "0.6.0").upgradable
+        );
+        let c = install_channel(&Route::Unknown("/u".into()), "0.6.0");
+        assert!(!c.upgradable);
+        assert_eq!(c.channel, "unknown");
     }
 }

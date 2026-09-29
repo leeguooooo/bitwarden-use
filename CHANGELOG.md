@@ -1,3 +1,7 @@
+# Unreleased
+
+- `upgrade`: skill copies are refreshed only with `--skills` (listed otherwise); `--tag vX.Y.Z` pins a version (downgrade allowed); refuses without changing anything when the binary came from cargo, Homebrew, a source build or a directory `install.sh` did not lay out (exit 1); checks the installed `--version` afterwards; reports whether an agent is running (pidfile only) and that it keeps the old version until `stop-agent`. `--json` adds `install_channel`, `agent` and `target`.
+
 # 0.5.0
 
 - `upgrade` (`--check`, `--json`): install the latest GitHub release through `install.sh` and refresh installed copies of the skill (Claude Code plugin, git checkout, copied folder). Exit 2 when the check or download fails.

@@ -124,9 +124,17 @@ from the environment.
 ## Upgrade
 
 When any `bitwarden-use` command prints `bitwarden-use X is available`, tell the user and offer to
-run `bitwarden-use upgrade` (it updates the CLI and this skill; it never touches the vault and
-needs no unlock). Check without changing anything: `bitwarden-use upgrade --check`. The user may
-also just say "升级 bitwarden-use" / "upgrade bitwarden-use".
+run `bitwarden-use upgrade` (it updates the CLI and agent binaries through the checksummed
+installer; it never touches the vault and needs no unlock). Check without changing anything:
+`bitwarden-use upgrade --check` (`--json` for machine output). The user may also just say
+"升级 bitwarden-use" / "upgrade bitwarden-use".
+
+- Skill copies are only listed by default; add `--skills` to also refresh this skill (Claude Code
+  plugin, its own git checkout). `--tag vX.Y.Z` pins a version.
+- If it says the binary came from cargo / Homebrew / a source build, run the command it prints
+  instead; it changes nothing in that case (exit 1).
+- A running `bitwarden-use-agent` keeps the old version until `bitwarden-use stop-agent`; that locks
+  the vault, so only suggest it and let the user decide.
 
 If the skill came from somewhere `upgrade` can't refresh:
 - Claude Code plugin: `claude plugin update bitwarden-use@leeguooooo-plugins`
