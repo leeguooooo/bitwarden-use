@@ -1,3 +1,10 @@
+# Unreleased
+
+- Revoked refresh token (#6): the token endpoint's OAuth error (`{"error":"invalid_grant"}`) is reported as "the server rejected the saved login … run `bwu login --force`" instead of `failed to parse JSON: missing field access_token`.
+- On `invalid_grant` the stored access/refresh tokens are dropped and the encrypted vault cache is kept, so the next `bwu login` prompts for the master password. Reads keep working from the offline cache meanwhile (with a notice on stderr); writes prompt for the login.
+- `bwu login --force`: sign in again even when a saved login exists.
+- `bwu purge` says that it deletes the offline cache and points to `login --force`.
+
 # 0.6.0
 
 - `upgrade`: skill copies are refreshed only with `--skills` (listed otherwise); `--tag vX.Y.Z` pins a version (downgrade allowed); refuses without changing anything when the binary came from cargo, Homebrew, a source build or a directory `install.sh` did not lay out (exit 1); checks the installed `--version` afterwards; reports whether an agent is running (pidfile only) and that it keeps the old version until `stop-agent`. `--json` adds `install_channel`, `agent` and `target`.

@@ -79,10 +79,11 @@ pub async fn login(
     sock: &mut crate::sock::Sock,
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     environment: &rbw::protocol::Environment,
+    force: bool,
 ) -> anyhow::Result<()> {
     let db = load_db().await.unwrap_or_else(|_| rbw::db::Db::new());
 
-    if db.needs_login() {
+    if force || db.needs_login() {
         let url_str = config_base_url().await?;
         let url = reqwest::Url::parse(&url_str)
             .context("failed to parse base url")?;
@@ -542,12 +543,16 @@ pub async fn sync(
     let access_token = if let Some(access_token) = &db.access_token {
         access_token.clone()
     } else {
-        return Err(anyhow::anyhow!("failed to find access token in db"));
+        return Err(anyhow::anyhow!(
+            "not signed in to the server; run `bwu login`"
+        ));
     };
     let refresh_token = if let Some(refresh_token) = &db.refresh_token {
         refresh_token.clone()
     } else {
-        return Err(anyhow::anyhow!("failed to find refresh token in db"));
+        return Err(anyhow::anyhow!(
+            "not signed in to the server; run `bwu login`"
+        ));
     };
     let (
         access_token,

@@ -1506,6 +1506,10 @@ impl Client {
             .form(&connect_req)
             .send()
             .map_err(|source| Error::Reqwest { source })?;
+        if res.status() != reqwest::StatusCode::OK {
+            let code = res.status().as_u16();
+            return Err(refresh_error(code, &res.text().unwrap_or_default()));
+        }
         let connect_res: ConnectRefreshTokenRes = res.json_with_path()?;
         Ok(connect_res.access_token)
     }
@@ -1526,6 +1530,11 @@ impl Client {
             .send()
             .await
             .map_err(|source| Error::Reqwest { source })?;
+        if res.status() != reqwest::StatusCode::OK {
+            let code = res.status().as_u16();
+            let body = res.text().await.unwrap_or_default();
+            return Err(refresh_error(code, &body));
+        }
         let connect_res: ConnectRefreshTokenRes =
             res.json_with_path().await?;
         Ok(connect_res.access_token)
@@ -1537,6 +1546,26 @@ impl Client {
 
     fn identity_url(&self, path: &str) -> String {
         format!("{}{}", self.identity_url, path)
+    }
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct OAuthErrorRes {
+    error: String,
+    error_description: Option<String>,
+}
+
+// The token endpoint answers a failed refresh with an OAuth error body such
+// as `{"error":"invalid_grant"}`, which must not be parsed as a token.
+fn refresh_error(status: u16, body: &str) -> Error {
+    if let Ok(res) = serde_json::from_str::<OAuthErrorRes>(body) {
+        Error::RefreshTokenRejected {
+            error: res.error,
+            description: res.error_description.filter(|d| !d.is_empty()),
+        }
+    } else {
+        log::warn!("refresh token exchange failed ({status}): {body}");
+        Error::RequestFailed { status }
     }
 }
 
@@ -1797,5 +1826,46 @@ mod patch_tests {
             .patch_cipher("fixture-token", "fixture", &patch)
             .unwrap();
         server.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+    use std::io::{Read as _, Write as _};
+
+    #[test]
+    fn refresh_rejection_is_reported_not_parsed_as_token() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0; 4096];
+            let _ = stream.read(&mut buf).unwrap();
+            // Vaultwarden's body for a revoked refresh token.
+            let body = r#"{"error":"invalid_grant"}"#;
+            write!(stream, "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        });
+        let client = Client::new("", &format!("http://{address}"), "", None);
+        let err = client.exchange_refresh_token("revoked").unwrap_err();
+        server.join().unwrap();
+        assert!(
+            matches!(&err, Error::RefreshTokenRejected { error, description: None } if error == "invalid_grant"),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains("bwu login --force"));
+    }
+
+    #[test]
+    fn refresh_error_keeps_description_and_falls_back_on_non_oauth_body() {
+        let err = refresh_error(
+            400,
+            r#"{"error":"invalid_grant","error_description":"expired"}"#,
+        );
+        assert!(err.to_string().contains("(invalid_grant: expired)"));
+        assert!(matches!(
+            refresh_error(502, "<html>bad gateway</html>"),
+            Error::RequestFailed { status: 502 }
+        ));
     }
 }

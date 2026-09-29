@@ -161,8 +161,9 @@ async fn handle_request(
             crate::actions::register(sock, &environment).await?;
             true
         }
-        rbw::protocol::Action::Login => {
-            crate::actions::login(sock, state.clone(), &environment).await?;
+        rbw::protocol::Action::Login { force } => {
+            crate::actions::login(sock, state.clone(), &environment, *force)
+                .await?;
             true
         }
         rbw::protocol::Action::UnlockKeychain { store } => {

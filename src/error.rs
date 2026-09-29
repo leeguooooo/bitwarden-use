@@ -194,6 +194,15 @@ pub enum Error {
     #[error("api request unauthorized")]
     RequestUnauthorized,
 
+    #[error(
+        "the server rejected the saved login ({error}{}); run `bwu login --force` to sign in again (the offline cache is kept)",
+        .description.as_ref().map(|d| format!(": {d}")).unwrap_or_default()
+    )]
+    RefreshTokenRejected {
+        error: String,
+        description: Option<String>,
+    },
+
     #[error("error making api request")]
     Reqwest { source: reqwest::Error },
 

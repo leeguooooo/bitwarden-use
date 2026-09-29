@@ -249,7 +249,8 @@ where
     match f(access_token) {
         Ok(t) => Ok((None, t)),
         Err(Error::RequestUnauthorized) => {
-            let access_token = exchange_refresh_token(refresh_token)?;
+            let access_token = exchange_refresh_token(refresh_token)
+                .inspect_err(forget_rejected_tokens)?;
             let t = f(&access_token)?;
             Ok((Some(access_token), t))
         }
@@ -274,12 +275,36 @@ where
     match f(access_token).await {
         Ok(t) => Ok((None, t)),
         Err(Error::RequestUnauthorized) => {
-            let access_token =
-                exchange_refresh_token_async(refresh_token).await?;
+            let access_token = exchange_refresh_token_async(refresh_token)
+                .await
+                .inspect_err(forget_rejected_tokens)?;
             let t = f(&access_token).await?;
             Ok((Some(access_token), t))
         }
         Err(e) => Err(e),
+    }
+}
+
+// A refresh token the server has revoked can never work again. Drop the
+// stored tokens (but keep the encrypted vault cache) so that the next
+// `login` actually asks for the master password instead of reusing them.
+fn forget_rejected_tokens(err: &Error) {
+    if !matches!(err, Error::RefreshTokenRejected { error, .. } if error == "invalid_grant")
+    {
+        return;
+    }
+    let res = (|| -> Result<()> {
+        let config = crate::config::Config::load()?;
+        let Some(email) = &config.email else {
+            return Ok(());
+        };
+        let mut db = crate::db::Db::load(&config.server_name(), email)?;
+        db.access_token = None;
+        db.refresh_token = None;
+        db.save(&config.server_name(), email)
+    })();
+    if let Err(e) = res {
+        log::warn!("failed to clear rejected tokens: {e}");
     }
 }
 

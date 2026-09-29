@@ -334,6 +334,14 @@ impl Db {
         Ok(())
     }
 
+    /// Whether the encrypted vault can be unlocked without the server.
+    pub fn has_offline_cache(&self) -> bool {
+        self.kdf.is_some()
+            && self.iterations.is_some()
+            && self.protected_key.is_some()
+            && self.protected_private_key.is_some()
+    }
+
     pub fn needs_login(&self) -> bool {
         self.access_token.is_none()
             || self.refresh_token.is_none()

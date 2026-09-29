@@ -161,9 +161,15 @@ unlock it), and `bitwarden-use add` will do both.
 
 Logging in and unlocking are only done as necessary, so running
 `bitwarden-use login` when already logged in does nothing, and similarly for
-`bitwarden-use unlock`. You can explicitly log out with `bitwarden-use purge`,
-and explicitly lock the database with `bitwarden-use lock` or
-`bitwarden-use stop-agent`.
+`bitwarden-use unlock`. Use `bitwarden-use login --force` to sign in again
+anyway, e.g. after the server revoked the saved login. When a refresh is
+rejected (`invalid_grant`), the saved tokens are dropped but the offline vault
+cache is kept: reads keep working from the cache, and the next
+`bitwarden-use login` (or any write) asks for the master password again.
+Explicitly lock the database with `bitwarden-use lock` or
+`bitwarden-use stop-agent`. `bitwarden-use purge` logs out and **deletes the
+offline cache** — the copy you still have when the server is down — so copy
+it first if you might need it.
 
 `bitwarden-use help` gives more information about the available functionality.
 
