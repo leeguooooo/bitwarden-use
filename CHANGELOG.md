@@ -1,3 +1,7 @@
+# 0.6.2
+
+- Claude Code plugin: the CLI now follows the plugin. A SessionStart hook (`hooks/sync-cli.sh`, declared in the leeguooooo/plugins marketplace entry) installs the plugin's version when the installed CLI is older — `upgrade --tag`, or `install.sh` for 0.4.x, which has no `upgrade`. Logs to `~/.cache/bitwarden-use/auto-upgrade.log`; a failed version is retried at most hourly; off with `BITWARDEN_USE_NO_AUTO_UPGRADE` / `USE_NO_AUTO_UPGRADE`.
+
 # 0.6.1
 
 - Revoked refresh token (#6): the token endpoint's OAuth error (`{"error":"invalid_grant"}`) is reported as "the server rejected the saved login … run `bwu login --force`" instead of `failed to parse JSON: missing field access_token`.

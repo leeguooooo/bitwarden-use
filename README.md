@@ -81,6 +81,16 @@ running agent keeps the old version until `bitwarden-use stop-agent`. Once a day
 `BITWARDEN_USE_NO_UPDATE_CHECK=1` (or the family-wide `USE_NO_UPDATE_CHECK=1`)
 to turn it off. Neither touches the vault or needs it unlocked.
 
+**With the Claude Code plugin the CLI follows the plugin.** A SessionStart hook
+([`hooks/sync-cli.sh`](hooks/sync-cli.sh)) compares the installed CLI with the
+plugin's version and, when the CLI is older, installs exactly that release
+(`upgrade --tag`, or `install.sh` for 0.4.x, which predates `upgrade`), logging to
+`~/.cache/bitwarden-use/auto-upgrade.log`. The next command restarts the agent,
+so the vault asks to unlock once. Off with `BITWARDEN_USE_NO_AUTO_UPGRADE=1` (or
+`USE_NO_AUTO_UPGRADE=1`). For the plugin itself to update, turn on auto-update
+for the marketplace: `/plugin` → Marketplaces → leeguooooo-plugins → Enable
+auto-update (off by default for third-party marketplaces).
+
 ## Configuration
 
 Configuration options are set using the `bitwarden-use config` command.

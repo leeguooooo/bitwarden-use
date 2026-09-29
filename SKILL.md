@@ -140,3 +140,7 @@ installer; it never touches the vault and needs no unlock). Check without changi
 If the skill came from somewhere `upgrade` can't refresh:
 - Claude Code plugin: `claude plugin update bitwarden-use@leeguooooo-plugins`
 - Whole family: `curl -fsSL https://raw.githubusercontent.com/leeguooooo/plugins/main/upgrade-use-family.sh | sh`
+
+Installed as the Claude Code plugin, the CLI follows the plugin on its own: at session start a hook
+upgrades an older CLI to the plugin's version and reports it in one line. If that line says the
+upgrade failed, tell the user and show the command it prints.
