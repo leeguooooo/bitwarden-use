@@ -69,10 +69,13 @@ require the
 program (to display password prompts). The installer also drops a short **`bwu`**
 symlink so you can type `bwu fido2 list` instead of the full name.
 
-**Upgrading** — `bitwarden-use upgrade` installs the latest release into the
-directory the running binary lives in (through `install.sh`) and refreshes
-installed copies of the agent skill. `upgrade --check` / `upgrade --json` only
-report. Once a day any command may print a one-line
+**Upgrading** — `bitwarden-use upgrade` installs the latest release (CLI + agent,
+sha256-verified, swapped in atomically, old pair kept on failure) into the
+directory the running binary lives in, through `install.sh`; it refuses and
+prints the right command for cargo, Homebrew or source installs. `--tag vX.Y.Z`
+pins a version, `--skills` also refreshes this skill's own copies (Claude Code
+plugin, git checkout), and `upgrade --check` / `upgrade --json` only report. A
+running agent keeps the old version until `bitwarden-use stop-agent`. Once a day any command may print a one-line
 `bitwarden-use X is available` notice on stderr (cached in
 `~/.cache/bitwarden-use/update-check.json`, 2 s timeout); set
 `BITWARDEN_USE_NO_UPDATE_CHECK=1` (or the family-wide `USE_NO_UPDATE_CHECK=1`)

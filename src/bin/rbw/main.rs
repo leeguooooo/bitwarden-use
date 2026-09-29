@@ -314,19 +314,43 @@ enum Opt {
     GenCompletions { shell: CompletionShell },
 
     #[command(
-        about = "Upgrade bitwarden-use to the latest release",
-        long_about = "Upgrade bitwarden-use to the latest GitHub release \
-            (through install.sh, into the directory this binary runs from) \
-            and refresh installed copies of the agent skill. Never touches \
-            the vault or the running agent.\n\n\
+        about = "Upgrade bitwarden-use (CLI + agent) to the latest release",
+        long_about = "Upgrade bitwarden-use and bitwarden-use-agent to the \
+            latest GitHub release through install.sh (sha256-verified, \
+            swapped in atomically; on failure the installed pair is kept), \
+            into the directory this binary runs from. Refuses, changing \
+            nothing, when the binary came from cargo, Homebrew, a source \
+            build or anything install.sh did not lay out, and prints the \
+            right command instead. Never unlocks or touches the vault, \
+            config or the running agent; a running agent keeps the old \
+            version until `stop-agent`.\n\n\
+            Skill copies (Claude Code plugin, git checkout, npx skills \
+            folder) are listed, and refreshed only with --skills.\n\n\
             Exit codes: 0 success (also: already current, or a check that \
-            ran), 2 the check or download failed."
+            ran), 2 the check or download failed, 1 not upgraded here \
+            (other install channel) or the upgrade did not finish."
     )]
     Upgrade {
         #[arg(long, help = "Only report current -> latest; change nothing")]
         check: bool,
-        #[arg(long, help = "Like --check, as JSON (includes found skills)")]
+        #[arg(
+            long,
+            help = "Like --check, as JSON (skills, install channel, agent)"
+        )]
         json: bool,
+        #[arg(
+            long,
+            help = "Also refresh this tool's own skill copies (plugin, git \
+                    checkout); with the CLI current, only the skills"
+        )]
+        skills: bool,
+        #[arg(
+            long,
+            value_name = "vX.Y.Z",
+            help = "Install this release instead of the latest (downgrade \
+                    allowed)"
+        )]
+        tag: Option<String>,
     },
 }
 
@@ -698,9 +722,17 @@ fn main() {
             ),
         },
         Opt::StopAgent => commands::stop_agent(),
-        Opt::Upgrade { check, json } => {
-            std::process::exit(upgrade::run(check, json))
-        }
+        Opt::Upgrade {
+            check,
+            json,
+            skills,
+            tag,
+        } => std::process::exit(upgrade::run(&upgrade::Options {
+            check,
+            json,
+            skills,
+            tag,
+        })),
         Opt::GenCompletions { shell } => {
             match shell {
                 CompletionShell::Bash => {
