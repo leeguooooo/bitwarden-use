@@ -1,4 +1,4 @@
-# Unreleased
+# 0.6.1
 
 - Revoked refresh token (#6): the token endpoint's OAuth error (`{"error":"invalid_grant"}`) is reported as "the server rejected the saved login … run `bwu login --force`" instead of `failed to parse JSON: missing field access_token`.
 - On `invalid_grant` the stored access/refresh tokens are dropped and the encrypted vault cache is kept, so the next `bwu login` prompts for the master password. Reads keep working from the offline cache meanwhile (with a notice on stderr); writes prompt for the login.
