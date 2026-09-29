@@ -46,6 +46,13 @@ enum Opt {
 
     #[command(about = "Log in to the Bitwarden server")]
     Login {
+        #[arg(
+            long,
+            conflicts_with = "domain",
+            help = "Sign in again even if a saved login exists (use after \
+                    the server rejected it; keeps the offline cache)"
+        )]
+        force: bool,
         #[arg(long)]
         domain: Option<String>,
         #[arg(long, requires = "domain")]
@@ -293,7 +300,9 @@ enum Opt {
     #[command(about = "Lock the password database")]
     Lock,
 
-    #[command(about = "Remove the local copy of the password database")]
+    #[command(
+        about = "Remove the local copy of the password database (deletes the offline cache; to sign in again use `login --force`)"
+    )]
     Purge,
 
     #[command(
@@ -530,6 +539,7 @@ fn main() {
         },
         Opt::Register => commands::register(),
         Opt::Login {
+            force,
             domain,
             name,
             user,
@@ -541,7 +551,7 @@ fn main() {
                 user.as_deref(),
                 reveal,
             ),
-            None => commands::login(),
+            None => commands::login(force),
         },
         Opt::Unlock {
             keychain,

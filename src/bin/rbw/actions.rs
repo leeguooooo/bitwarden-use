@@ -6,8 +6,8 @@ pub fn register() -> anyhow::Result<()> {
     simple_action(rbw::protocol::Action::Register)
 }
 
-pub fn login() -> anyhow::Result<()> {
-    simple_action(rbw::protocol::Action::Login)
+pub fn login(force: bool) -> anyhow::Result<()> {
+    simple_action(rbw::protocol::Action::Login { force })
 }
 
 pub fn unlock() -> anyhow::Result<()> {

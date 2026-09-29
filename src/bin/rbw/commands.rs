@@ -1179,16 +1179,37 @@ pub fn register() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn login() -> anyhow::Result<()> {
+pub fn login(force: bool) -> anyhow::Result<()> {
     ensure_agent()?;
-    crate::actions::login()?;
+    crate::actions::login(force)?;
 
     Ok(())
 }
 
+// Unlock for reading. When the server has rejected the saved login (tokens
+// cleared, vault cache still present) this falls back to the offline cache
+// instead of requiring the server.
 pub fn unlock() -> anyhow::Result<()> {
     ensure_agent()?;
-    crate::actions::login()?;
+    match load_db() {
+        Ok(db) if db.has_offline_cache() && db.needs_login() => {
+            eprintln!(
+                "bwu: not signed in to the server; using the offline cache. \
+                 Run `bwu login` to sign in again."
+            );
+        }
+        _ => crate::actions::login(false)?,
+    }
+    crate::actions::unlock()?;
+
+    Ok(())
+}
+
+// Unlock for commands that write to the server: always make sure there is a
+// server login, prompting for the master password if it was rejected.
+pub fn unlock_online() -> anyhow::Result<()> {
+    ensure_agent()?;
+    crate::actions::login(false)?;
     crate::actions::unlock()?;
 
     Ok(())
@@ -1205,7 +1226,7 @@ pub fn unlocked() -> anyhow::Result<()> {
 
 pub fn sync() -> anyhow::Result<()> {
     ensure_agent()?;
-    crate::actions::login()?;
+    crate::actions::login(false)?;
     crate::actions::sync()?;
 
     Ok(())
@@ -1907,7 +1928,7 @@ pub fn add(
     options: &WriteOptions,
 ) -> anyhow::Result<()> {
     let input = rbw::edit::read_stdin(options.allow_empty)?;
-    unlock()?;
+    unlock_online()?;
 
     let mut db = load_db()?;
     // unwrap is safe here because the call to unlock above is guaranteed to
@@ -2033,7 +2054,7 @@ pub fn generate(
         if !options.confirm(&[("new login/password".into(), false, true)])? {
             return Ok(());
         }
-        unlock()?;
+        unlock_online()?;
 
         let mut db = load_db()?;
         // unwrap is safe here because the call to unlock above is guaranteed
@@ -2125,7 +2146,7 @@ pub fn remove(
     ignore_case: bool,
     options: &WriteOptions,
 ) -> anyhow::Result<()> {
-    unlock()?;
+    unlock_online()?;
 
     let mut db = load_db()?;
     let access_token = db.access_token.as_ref().unwrap();
@@ -2188,6 +2209,19 @@ pub fn lock() -> anyhow::Result<()> {
 }
 
 pub fn purge() -> anyhow::Result<()> {
+    if let Ok(config) = rbw::config::Config::load() {
+        if let Some(email) = &config.email {
+            let file = rbw::dirs::db_file(&config.server_name(), email);
+            if file.exists() {
+                eprintln!(
+                    "bwu purge: deleting the offline vault cache {}.\n\
+                     To sign in again after the server rejected the saved \
+                     login, `bwu login --force` is enough and keeps the cache.",
+                    file.display()
+                );
+            }
+        }
+    }
     stop_agent()?;
 
     remove_db()?;

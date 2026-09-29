@@ -420,7 +420,7 @@ pub fn set(
     options: &WriteOptions,
 ) -> anyhow::Result<()> {
     fields.validate(options)?; // Reject missing/empty input before any unlock or network operation.
-    unlock()?;
+    unlock_online()?;
     let mut db = load_db()?;
     let (entry, plain) = find_entry(&db, name, user, folder, ignore_case)?;
     let (patch, preview) = plan(&entry, &plain, &fields, options, |value| {
@@ -467,7 +467,7 @@ pub fn edit(
     options: &WriteOptions,
 ) -> anyhow::Result<()> {
     let input = rbw::edit::read_stdin(options.allow_empty)?;
-    unlock()?;
+    unlock_online()?;
     let mut db = load_db()?;
     let (entry, plain) = find_entry(&db, name, user, folder, ignore_case)?;
     let (patch, preview) = match &plain.data {

@@ -55,7 +55,8 @@ are exact; prefix `custom:` for names overlapping built-ins. `--codes` recognize
 code-shaped lines only and does not validate whether a recovery code is usable.
 
 First-time setup: `bwu config set email <email>` (plus `base_url` for Vaultwarden), then `bwu login`.
-`bwu login` without `--domain` retains the vault-login meaning. Profiles use `RBW_PROFILE=<name>`.
+`bwu login` without `--domain` retains the vault-login meaning.
+If a command says the server rejected the saved login, run `bwu login --force` (keeps the offline cache); never `bwu purge`, which deletes the offline cache. Profiles use `RBW_PROFILE=<name>`.
 
 ## macOS Keychain unlock
 
