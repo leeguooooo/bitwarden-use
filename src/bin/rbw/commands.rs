@@ -2456,6 +2456,13 @@ pub fn run(
             item.folder.as_deref(),
         )?;
     }
+    // A one-time code is generated again now: the prompt above may have
+    // taken long enough for the first one to expire.
+    for ((_, value), (spec, decrypted)) in vars.iter_mut().zip(&found) {
+        if spec.field.as_deref() == Some("totp") {
+            *value = decrypted.secret_value(Some("totp"))?;
+        }
+    }
     let mut cmd = std::process::Command::new(&command[0]);
     cmd.args(&command[1..]).envs(vars);
     #[cfg(unix)]

@@ -1,3 +1,7 @@
+# 0.7.1
+
+- `run`: a `#totp` value is generated after the confirmation prompt, not before it. A slow Touch ID answer could hand the command a code from the previous 30-second window, which sites reject.
+
 # 0.7.0
 
 Ideas borrowed from [rofi-rbw](https://github.com/fdw/rofi-rbw), aimed at logging in to websites with chrome-use.
