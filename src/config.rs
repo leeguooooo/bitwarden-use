@@ -32,6 +32,11 @@ pub struct Config {
     /// only if nothing else was copied since. 0 = never clear.
     #[serde(default = "default_clipboard_clear_after")]
     pub clipboard_clear_after: u64,
+    /// `false` trusts this computer: no Touch ID before a Keychain unlock or
+    /// a reveal outside `reveal_folders`, so unattended automation runs.
+    /// Reveals are still audited (`auth: "trusted-device"`).
+    #[serde(default = "default_require_touch_id")]
+    pub require_touch_id: bool,
     pub client_cert_path: Option<std::path::PathBuf>,
     // backcompat, no longer generated in new configs
     #[serde(skip_serializing)]
@@ -54,6 +59,7 @@ impl Default for Config {
             unlock_with_keychain: false,
             lock_on_screen_lock: default_lock_on_screen_lock(),
             clipboard_clear_after: default_clipboard_clear_after(),
+            require_touch_id: default_require_touch_id(),
             client_cert_path: None,
             device_id: None,
         }
@@ -61,6 +67,10 @@ impl Default for Config {
 }
 
 pub fn default_lock_on_screen_lock() -> bool {
+    true
+}
+
+pub fn default_require_touch_id() -> bool {
     true
 }
 
@@ -272,4 +282,14 @@ pub async fn device_id(config: &Config) -> Result<String> {
         })?;
         Ok(id)
     }
+}
+
+#[test]
+fn touch_id_is_required_unless_turned_off() {
+    let old: Config = serde_json::from_str(r#"{"email":"a@b.c"}"#).unwrap();
+    assert!(old.require_touch_id);
+    let off: Config =
+        serde_json::from_str(r#"{"email":"a@b.c","require_touch_id":false}"#)
+            .unwrap();
+    assert!(!off.require_touch_id);
 }

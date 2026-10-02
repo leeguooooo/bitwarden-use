@@ -1116,6 +1116,11 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
                 .parse()
                 .context("lock_on_screen_lock must be true or false")?;
         }
+        "require_touch_id" => {
+            config.require_touch_id = value
+                .parse()
+                .context("require_touch_id must be true or false")?;
+        }
         "clipboard_clear_after" => {
             config.clipboard_clear_after = value.parse().context(
                 "clipboard_clear_after must be a number of seconds (0 = never)",
@@ -1155,6 +1160,9 @@ pub fn config_unset(key: &str) -> anyhow::Result<()> {
         "lock_on_screen_lock" => {
             config.lock_on_screen_lock =
                 rbw::config::default_lock_on_screen_lock();
+        }
+        "require_touch_id" => {
+            config.require_touch_id = rbw::config::default_require_touch_id();
         }
         "clipboard_clear_after" => {
             config.clipboard_clear_after =

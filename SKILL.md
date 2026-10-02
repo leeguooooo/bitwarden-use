@@ -98,6 +98,9 @@ export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/rbw/ssh-agent-socket"   # rbw-<profile> i
 - `fido2 get` prints metadata only; `--reveal` for the private key (always confirmed). Prefer
   `fido2 assert`.
 - Unlocking may also show Touch ID (Keychain unlock). The vault locks itself when the screen locks.
+- With `require_touch_id` set to `false` (`bwu config show`; leo's Mac, for unattended runs) none of
+  this prompts: unlock and reveals go through, still audited as `trusted-device`. Don't turn it
+  on or off yourself; it is the user's decision.
 
 ## Inject, don't print (0.4.0+)
 

@@ -60,6 +60,9 @@ pub fn authorize_fields(
     let auth = match decide(&config.reveal_folders, folder) {
         Decision::Unrestricted => "unrestricted",
         Decision::Allowed => "folder-allowlist",
+        Decision::NeedsConfirmation if !config.require_touch_id => {
+            "trusted-device"
+        }
         Decision::NeedsConfirmation => {
             crate::touchid::confirm(&format!(
                 "reveal \"{item}\"{} to {caller}",

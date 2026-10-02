@@ -1,3 +1,7 @@
+# 0.8.0
+
+- `require_touch_id` (config, default `true`): `bwu config set require_touch_id false` trusts this computer for unattended automation. Keychain unlocks and reveals outside `reveal_folders` no longer ask for Touch ID, including after the vault locked itself on idle or screen lock. Every reveal is still in the audit log, with `auth: "trusted-device"`.
+
 # 0.7.1
 
 - `run`: a `#totp` value is generated after the confirmation prompt, not before it. A slow Touch ID answer could hand the command a code from the previous 30-second window, which sites reject.

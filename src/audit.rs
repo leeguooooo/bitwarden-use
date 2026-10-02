@@ -16,7 +16,8 @@ pub struct Reveal<'a> {
     pub folder: Option<&'a str>,
     /// Process chain that asked, nearest first, e.g. "zsh < claude < iTerm2".
     pub caller: String,
-    /// "unrestricted" (no reveal_folders set), "folder-allowlist" or "touch-id".
+    /// "unrestricted" (no reveal_folders set), "folder-allowlist", "touch-id",
+    /// or "trusted-device" (`require_touch_id` is false).
     pub auth: &'a str,
 }
 

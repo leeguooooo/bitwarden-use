@@ -130,6 +130,9 @@ Available configuration options:
   `unlock --keychain-store`). Falls back to pinentry if that fails.
 * `lock_on_screen_lock`: Drop the keys when the screen locks (default `true`,
   macOS; the screen locks on sleep).
+* `require_touch_id`: `false` trusts this computer: no Touch ID before a
+  Keychain unlock or a reveal outside `reveal_folders` (default `true`).
+  Reveals are still audited. See below.
 * `clipboard_clear_after`: Seconds a value copied with `--clipboard` stays on
   the clipboard (default `30`, `0` = never). It is cleared only if nothing else
   was copied since. On macOS copies are also marked
@@ -152,6 +155,19 @@ as you can talk to it. 0.3.0 adds a human gate for the parts that matter:
 * **`fido2 get` hides the private key** unless `--reveal`; prefer
   `fido2 assert`, which signs without exporting it.
 * **Screen lock drops the keys**, independent of `lock_timeout`.
+
+For unattended automation on a computer you trust, turn the prompts off:
+
+```sh
+bwu config set require_touch_id false
+```
+
+The Keychain unlock and every reveal then go through without Touch ID, also
+after the vault locked itself (idle timeout or screen lock). Reveals are still
+written to the audit log, with `auth: "trusted-device"`. Anyone, and any
+process, using your account on this computer can then read the whole vault
+while it is unlocked or the Keychain entry exists; `bwu config unset
+require_touch_id` turns the prompts back on.
 
 Suggested setup:
 
