@@ -1,6 +1,6 @@
 [package]
 name = "bitwarden-use"
-version = "0.6.2"
+version = "0.7.0"
 authors = ["leeguooooo <leeguooooo@gmail.com>"]
 edition = "2021"
 rust-version = "1.85.0"
