@@ -120,7 +120,7 @@ from the environment.
 
 ## Logging in to a website (0.7.0+)
 
-With chrome-use, prefer `chrome-use auth login --bwu` on the login page: it picks the account and
+With chrome-use 1.5.153+, prefer `chrome-use auth login --bwu` on the login page: it picks the account and
 fills it through `run`. Doing it by hand:
 
 1. `bwu login --domain <url> --list` — candidates with `uses` / `last_used`. One candidate: use
