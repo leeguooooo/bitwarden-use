@@ -1,3 +1,7 @@
+# 0.8.1
+
+- macOS release binaries are signed with a fixed self-signed certificate (identifiers `com.leeguooooo.bitwarden-use` and `com.leeguooooo.bitwarden-use-agent`), instead of an ad-hoc signature that changed with every build. The Keychain matches an "Always Allow" against that signature, so the permission now survives upgrades: allow the agent once, and unattended Keychain unlocks (`require_touch_id false`) keep working after `upgrade` or the plugin's automatic one.
+
 # 0.8.0
 
 - `require_touch_id` (config, default `true`): `bwu config set require_touch_id false` trusts this computer for unattended automation. Keychain unlocks and reveals outside `reveal_folders` no longer ask for Touch ID, including after the vault locked itself on idle or screen lock. Every reveal is still in the audit log, with `auth: "trusted-device"`.

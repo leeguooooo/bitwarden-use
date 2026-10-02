@@ -169,6 +169,12 @@ process, using your account on this computer can then read the whole vault
 while it is unlocked or the Keychain entry exists; `bwu config unset
 require_touch_id` turns the prompts back on.
 
+The first Keychain unlock after installing 0.8.1 or later shows macOS's own
+"bitwarden-use-agent wants to use your confidential information" dialog once:
+enter your login password and choose **Always Allow**. Release binaries are
+signed with the same certificate every time, so later upgrades do not ask
+again. (Before 0.8.1 every upgrade asked.)
+
 Suggested setup:
 
 ```sh

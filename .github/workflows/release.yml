@@ -51,6 +51,34 @@ jobs:
           cargo test --locked --no-default-features --bin bitwarden-use cli_tests
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} --bins
+      # A fixed self-signed certificate gives every release the same designated
+      # requirement (identifier + certificate root), so the Keychain's "Always
+      # Allow" for the agent survives upgrades; ad-hoc signatures change with
+      # every build and bring the Keychain dialog back. rcodesign signs without
+      # the certificate being trusted (codesign refuses it).
+      - name: Sign (macOS)
+        if: runner.os == 'macOS'
+        env:
+          P12: ${{ secrets.MACOS_SIGN_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$P12" ]; then echo "no signing certificate; keeping ad-hoc signatures"; exit 0; fi
+          v=0.29.0
+          curl -fsSLo rc.tgz "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F$v/apple-codesign-$v-macos-universal.tar.gz"
+          echo "d98372d5524226ccf9dc0eda03d4e4f5826182dabb2fc3f2bd303ed9113a748d  rc.tgz" | shasum -a 256 -c -
+          tar xzf rc.tgz
+          rc="apple-codesign-$v-macos-universal/rcodesign"
+          printf '%s' "$P12" | base64 -D > "$RUNNER_TEMP/sign.p12"
+          printf '%s' "$P12_PASSWORD" > "$RUNNER_TEMP/sign.pass"
+          for bin in bitwarden-use bitwarden-use-agent; do
+            f="target/${{ matrix.target }}/release/$bin"
+            "$rc" sign --p12-file "$RUNNER_TEMP/sign.p12" --p12-password-file "$RUNNER_TEMP/sign.pass" \
+              --binary-identifier "com.leeguooooo.$bin" "$f"
+            codesign -v "$f"
+            codesign -dr - "$f" 2>&1 | grep -q 'certificate root = H"d93e5c326f8726f0d34630d861a502863a272b5c"'
+          done
+          rm -f "$RUNNER_TEMP/sign.p12" "$RUNNER_TEMP/sign.pass"
       - name: Package and smoke test
         shell: bash
         run: |
