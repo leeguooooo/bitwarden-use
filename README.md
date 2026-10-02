@@ -1,6 +1,9 @@
 # bitwarden-use
 
-Version 0.4.0 adds `run`: secrets go straight into a command's environment and never into your
+Version 0.7.0 is built for logging in from a browser agent: `login --domain --list` ranks the
+accounts for a site by how recently you used them, an `_autotype` field describes a site's login
+steps, `run` asks once per item, and clipboard copies are hidden from clipboard history and
+cleared after 30 s. See [Logging in to websites](#logging-in-to-websites). Version 0.4.0 adds `run`: secrets go straight into a command's environment and never into your
 terminal, logs or an AI agent's context. Version 0.3.0 puts a human in the loop: Touch ID before
 Keychain unlock and before revealing items outside `reveal_folders`, an audit log of every
 reveal, `fido2 get` masks the private key unless `--reveal`, and the agent drops keys when the
@@ -127,6 +130,11 @@ Available configuration options:
   `unlock --keychain-store`). Falls back to pinentry if that fails.
 * `lock_on_screen_lock`: Drop the keys when the screen locks (default `true`,
   macOS; the screen locks on sleep).
+* `clipboard_clear_after`: Seconds a value copied with `--clipboard` stays on
+  the clipboard (default `30`, `0` = never). It is cleared only if nothing else
+  was copied since. On macOS copies are also marked
+  `org.nspasteboard.ConcealedType`, so clipboard history apps (Pastyx, Maccy,
+  Raycast, …) don't keep them.
 
 ### Human confirmation and audit (macOS)
 
@@ -195,6 +203,41 @@ To use `bitwarden-use` with it, first run `bitwarden-use register` to register
 each device with the server. This prompts for your personal API key, which you
 can find using the instructions
 [here](https://bitwarden.com/help/article/personal-api-key/).
+
+### Logging in to websites
+
+[chrome-use](https://github.com/leeguooooo/chrome-use) logs in with your vault
+when `bwu` is installed:
+
+```sh
+chrome-use open https://github.com/login
+chrome-use auth login --bwu              # account for the current page; Touch ID once
+```
+
+Underneath it uses two commands any tool can call:
+
+```sh
+bwu login --domain github.com --list     # masked candidates, most recently used first
+bwu run --env U=bw:<uuid>#username --env P=bw:<uuid>#password -- <filler>
+```
+
+`--list` prints every login matching the site with `uses` and `last_used`,
+counted from the reveal audit log, so the account you actually use comes first.
+Values stay masked; nothing is revealed and nothing asks for Touch ID. `run`
+then asks once for the item, however many of its fields it injects.
+
+For sites whose login is not "username, password, submit", add a custom field
+named `_autotype` to the item. The syntax is the same as
+[rofi-rbw](https://github.com/fdw/rofi-rbw)'s: steps separated by `:`, made of
+`username`, `password`, `totp`, `tab`, `enter`, `delay`, or the name of
+another custom field. A two-page login is
+
+```
+username:enter:delay:password:enter
+```
+
+`login --domain` returns the parsed steps as `autotype` (step names only, so
+they appear unmasked).
 
 ### FIDO2 / passkeys
 

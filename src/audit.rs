@@ -93,6 +93,61 @@ pub fn record(r: &Reveal<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// How often and how recently each item was revealed, keyed by item id.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Usage {
+    pub uses: u32,
+    /// RFC 3339, so it sorts as text.
+    pub last_used: String,
+}
+
+/// Usage per item id, read from the audit log. Used to put the account you
+/// actually use first when several match. A missing log means no history.
+pub fn usage() -> std::collections::HashMap<String, Usage> {
+    log_path()
+        .and_then(|p| Ok(std::fs::read_to_string(p)?))
+        .map(|text| usage_from(&text))
+        .unwrap_or_default()
+}
+
+pub fn usage_from(text: &str) -> std::collections::HashMap<String, Usage> {
+    #[derive(serde::Deserialize)]
+    struct Line {
+        ts: String,
+        id: Option<String>,
+    }
+    let mut out = std::collections::HashMap::<String, Usage>::new();
+    for line in text.lines() {
+        let Ok(Line { ts, id: Some(id) }) = serde_json::from_str(line) else {
+            continue;
+        };
+        let u = out.entry(id).or_default();
+        u.uses += 1;
+        if ts > u.last_used {
+            u.last_used = ts;
+        }
+    }
+    out
+}
+
+#[test]
+fn usage_counts_and_keeps_latest() {
+    let log = concat!(
+        r#"{"ts":"2026-09-01T00:00:00Z","cmd":"run","item":"a","id":"1"}"#,
+        "\n",
+        r#"{"ts":"2026-09-03T00:00:00Z","cmd":"run","item":"a","id":"1"}"#,
+        "\nnot json\n",
+        r#"{"ts":"2026-09-02T00:00:00Z","cmd":"get","item":"b","id":"2"}"#,
+        "\n",
+        r#"{"ts":"2026-09-04T00:00:00Z","cmd":"get","item":"c","id":null}"#,
+    );
+    let u = usage_from(log);
+    assert_eq!(u.len(), 2);
+    assert_eq!(u["1"].uses, 2);
+    assert_eq!(u["1"].last_used, "2026-09-03T00:00:00Z");
+    assert_eq!(u["2"].uses, 1);
+}
+
 #[test]
 fn line_has_no_value_and_is_json() {
     let r = Reveal {

@@ -752,11 +752,51 @@ pub async fn clipboard_store(
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     text: &str,
 ) -> anyhow::Result<()> {
-    let mut state = state.lock().await;
-    if let Some(clipboard) = &mut state.clipboard {
-        clipboard.set_text(text).map_err(|e| {
-            anyhow::anyhow!("couldn't store value to clipboard: {e}")
-        })?;
+    let clear_after = rbw::config::Config::load_async().await.map_or_else(
+        |_| rbw::config::default_clipboard_clear_after(),
+        |c| c.clipboard_clear_after,
+    );
+    let generation = {
+        let mut state = state.lock().await;
+        if let Some(clipboard) = &mut state.clipboard {
+            let set = clipboard.set();
+            // org.nspasteboard.ConcealedType: clipboard history apps
+            // (Pastyx, Maccy, Raycast, ...) skip the value.
+            #[cfg(target_os = "macos")]
+            let set = {
+                use arboard::SetExtApple as _;
+                set.exclude_from_history()
+            };
+            set.text(text).map_err(|e| {
+                anyhow::anyhow!("couldn't store value to clipboard: {e}")
+            })?;
+        }
+        state.clipboard_generation += 1;
+        state.clipboard_generation
+    };
+
+    if clear_after > 0 {
+        let text = zeroize::Zeroizing::new(text.to_string());
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(clear_after))
+                .await;
+            let mut state = state.lock().await;
+            if state.clipboard_generation != generation {
+                return;
+            }
+            if let Some(clipboard) = &mut state.clipboard {
+                // leave it alone if the user copied something else since
+                let current =
+                    clipboard.get_text().ok().map(zeroize::Zeroizing::new);
+                if current.as_deref().map(String::as_str)
+                    == Some(text.as_str())
+                {
+                    if let Err(e) = clipboard.clear() {
+                        log::warn!("couldn't clear clipboard: {e}");
+                    }
+                }
+            }
+        });
     }
 
     respond_ack(sock).await?;

@@ -1116,6 +1116,11 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
                 .parse()
                 .context("lock_on_screen_lock must be true or false")?;
         }
+        "clipboard_clear_after" => {
+            config.clipboard_clear_after = value.parse().context(
+                "clipboard_clear_after must be a number of seconds (0 = never)",
+            )?;
+        }
         _ => return Err(anyhow::anyhow!("invalid config key: {key}")),
     }
     config.save()?;
@@ -1150,6 +1155,10 @@ pub fn config_unset(key: &str) -> anyhow::Result<()> {
         "lock_on_screen_lock" => {
             config.lock_on_screen_lock =
                 rbw::config::default_lock_on_screen_lock();
+        }
+        "clipboard_clear_after" => {
+            config.clipboard_clear_after =
+                rbw::config::default_clipboard_clear_after();
         }
         _ => return Err(anyhow::anyhow!("invalid config key: {key}")),
     }
@@ -2409,7 +2418,7 @@ pub fn run(
         .collect::<anyhow::Result<Vec<_>>>()?;
     unlock()?;
     let db = load_db()?;
-    let mut vars = Vec::with_capacity(specs.len());
+    let mut found = Vec::with_capacity(specs.len());
     for spec in &specs {
         let needle =
             parse_needle(&spec.needle).unwrap_or_else(|e| match e {});
@@ -2417,17 +2426,35 @@ pub fn run(
             .with_context(|| {
                 format!("couldn't find entry for '{}'", spec.needle)
             })?;
-        rbw::reveal::authorize(
-            "run",
-            &decrypted.name,
-            Some(&decrypted.id),
-            spec.field.as_deref(),
-            decrypted.folder.as_deref(),
-        )?;
+        found.push((spec, decrypted));
+    }
+    // Resolve every value first: a missing field fails before any prompt.
+    let mut vars = Vec::with_capacity(found.len());
+    for (spec, decrypted) in &found {
         vars.push((
             spec.var.clone(),
             decrypted.secret_value(spec.field.as_deref())?,
         ));
+    }
+    // One confirmation per item, however many of its fields are injected
+    // (a login's username, password and totp ask once).
+    let mut seen = std::collections::HashSet::new();
+    for (_, item) in &found {
+        if !seen.insert(item.id.as_str()) {
+            continue;
+        }
+        let fields: Vec<_> = found
+            .iter()
+            .filter(|(_, d)| d.id == item.id)
+            .map(|(s, _)| s.field.as_deref())
+            .collect();
+        rbw::reveal::authorize_fields(
+            "run",
+            &item.name,
+            Some(&item.id),
+            &fields,
+            item.folder.as_deref(),
+        )?;
     }
     let mut cmd = std::process::Command::new(&command[0]);
     cmd.args(&command[1..]).envs(vars);

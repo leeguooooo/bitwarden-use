@@ -49,6 +49,8 @@ async fn tokio_main(
                     log::warn!("couldn't create clipboard context: {e}");
                 })
                 .ok(),
+            #[cfg(feature = "clipboard")]
+            clipboard_generation: 0,
         }));
 
     let agent =

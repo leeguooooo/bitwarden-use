@@ -28,6 +28,10 @@ pub struct Config {
     /// Drop keys when the screen locks (macOS; the screen locks on sleep).
     #[serde(default = "default_lock_on_screen_lock")]
     pub lock_on_screen_lock: bool,
+    /// Seconds a value copied with `--clipboard` stays there; it is cleared
+    /// only if nothing else was copied since. 0 = never clear.
+    #[serde(default = "default_clipboard_clear_after")]
+    pub clipboard_clear_after: u64,
     pub client_cert_path: Option<std::path::PathBuf>,
     // backcompat, no longer generated in new configs
     #[serde(skip_serializing)]
@@ -49,6 +53,7 @@ impl Default for Config {
             reveal_folders: Vec::new(),
             unlock_with_keychain: false,
             lock_on_screen_lock: default_lock_on_screen_lock(),
+            clipboard_clear_after: default_clipboard_clear_after(),
             client_cert_path: None,
             device_id: None,
         }
@@ -57,6 +62,10 @@ impl Default for Config {
 
 pub fn default_lock_on_screen_lock() -> bool {
     true
+}
+
+pub fn default_clipboard_clear_after() -> u64 {
+    30
 }
 
 pub fn default_lock_timeout() -> u64 {

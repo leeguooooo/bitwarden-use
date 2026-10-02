@@ -61,6 +61,10 @@ enum Opt {
         user: Option<String>,
         #[arg(long, requires = "domain")]
         reveal: bool,
+        /// Print every login matching --domain (masked, most recently used
+        /// first) instead of requiring exactly one.
+        #[arg(long, requires = "domain", conflicts_with = "reveal")]
+        list: bool,
     },
 
     #[command(about = "Unlock the local Bitwarden database")]
@@ -544,12 +548,14 @@ fn main() {
             name,
             user,
             reveal,
+            list,
         } => match domain {
             Some(domain) => commands::domain_login(
                 &domain,
                 name.as_deref(),
                 user.as_deref(),
                 reveal,
+                list,
             ),
             None => commands::login(force),
         },

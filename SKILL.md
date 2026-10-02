@@ -28,6 +28,7 @@ bwu get <name> --field password --reveal # pass directly to the consumer, never 
 bwu get <name> --field 'custom:Recovery codes' --reveal # exact custom name
 bwu get <name> --codes --reveal          # standalone recovery-code lines from notes
 bwu login --domain example.com         # masked unique domain match
+bwu login --domain example.com --list  # all matches, masked, most recently used first
 bwu login --domain example.com --name <item-or-uuid> --user <username> --reveal
 bwu set <name> --uri https://example.com --match host --dry-run
 bwu set <name> --uri https://example.com --match host --yes
@@ -113,6 +114,24 @@ bwu run --env KEY='openai#custom:api key' --folder memory -- python3 job.py
 password; also `username`, `notes`, `totp`, `custom:<name>`). Same confirmation and audit rules as
 `--reveal`. Use `get --reveal` only when the user wants to see the value or no command can take it
 from the environment.
+
+## Logging in to a website (0.7.0+)
+
+With chrome-use, prefer `chrome-use auth login --bwu` on the login page: it picks the account and
+fills it through `run`. Doing it by hand:
+
+1. `bwu login --domain <url> --list` — candidates with `uses` / `last_used`. One candidate: use
+   it. Several: take the first only if the user's request doesn't point to another; otherwise ask.
+2. `bwu login --domain <url> --name <uuid>` — masked item with `autotype`: the site's login
+   steps (`username`, `password`, `totp`, `tab`, `enter`, `delay`, `custom:<name>`) from the
+   item's `_autotype` field, or null for the plain username → password → submit.
+3. `bwu run --env U=bw:<uuid>#username --env P=bw:<uuid>#password -- chrome-use …` — one
+   Touch ID prompt for the item. Fetch `#totp` in a separate `run` when the code field appears,
+   so the code is fresh.
+
+`get --clipboard` (needs `--reveal`) copies a value that is hidden from clipboard history and
+cleared after `clipboard_clear_after` seconds (default 30). Prefer `run`; copy only when the user
+wants to paste it themselves.
 
 ## Agent etiquette
 

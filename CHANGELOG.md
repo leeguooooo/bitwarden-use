@@ -1,3 +1,12 @@
+# 0.7.0
+
+Ideas borrowed from [rofi-rbw](https://github.com/fdw/rofi-rbw), aimed at logging in to websites with chrome-use.
+
+- `login --domain <url> --list`: every login matching the site, masked, most recently used first. Candidates (here and in the ambiguity error) carry `folder`, `uses` and `last_used`, counted from the reveal audit log; no extra cache file. Never reveals or asks for Touch ID.
+- `_autotype` custom field (rofi-rbw's syntax): login steps such as `username:enter:delay:password:enter`. `login --domain` returns the parsed steps as `autotype` (names only, unmasked), or null. An invalid sequence is an error naming the item.
+- `run`: one confirmation per item, naming all of its injected fields, instead of one per `--env`. Each field still gets its own audit line. Values are resolved before the prompt, so a missing field fails without asking.
+- Clipboard: `--clipboard` copies are marked `org.nspasteboard.ConcealedType` on macOS, so clipboard history apps (Pastyx, Maccy, Raycast) skip them, and the agent clears them after `clipboard_clear_after` seconds (new config key, default 30, 0 = never) unless something else was copied since.
+
 # 0.6.2
 
 - Claude Code plugin: the CLI now follows the plugin. A SessionStart hook (`hooks/sync-cli.sh`, declared in the leeguooooo/plugins marketplace entry) installs the plugin's version when the installed CLI is older — `upgrade --tag`, or `install.sh` for 0.4.x, which has no `upgrade`. Logs to `~/.cache/bitwarden-use/auto-upgrade.log`; a failed version is retried at most hourly; off with `BITWARDEN_USE_NO_AUTO_UPGRADE` / `USE_NO_AUTO_UPGRADE`.

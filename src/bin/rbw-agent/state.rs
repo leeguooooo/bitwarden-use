@@ -26,6 +26,10 @@ pub struct State {
 
     #[cfg(feature = "clipboard")]
     pub clipboard: Option<arboard::Clipboard>,
+    /// Bumped on every clipboard store, so a pending auto-clear only fires
+    /// for the copy that scheduled it.
+    #[cfg(feature = "clipboard")]
+    pub clipboard_generation: u64,
 }
 
 impl State {

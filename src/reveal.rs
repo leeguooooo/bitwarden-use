@@ -41,32 +41,51 @@ pub fn authorize(
     field: Option<&str>,
     folder: Option<&str>,
 ) -> anyhow::Result<()> {
+    authorize_fields(cmd, item, id, &[field], folder)
+}
+
+/// Like [`authorize`] for several fields of one item: a single confirmation
+/// names them all, and each field gets its own audit line.
+pub fn authorize_fields(
+    cmd: &str,
+    item: &str,
+    id: Option<&str>,
+    fields: &[Option<&str>],
+    folder: Option<&str>,
+) -> anyhow::Result<()> {
     let config = crate::config::Config::load()
         .unwrap_or_else(|_| crate::config::Config::new());
     let caller = crate::audit::caller_chain();
+    let named: Vec<&str> = fields.iter().flatten().copied().collect();
     let auth = match decide(&config.reveal_folders, folder) {
         Decision::Unrestricted => "unrestricted",
         Decision::Allowed => "folder-allowlist",
         Decision::NeedsConfirmation => {
             crate::touchid::confirm(&format!(
                 "reveal \"{item}\"{} to {caller}",
-                field.map_or_else(String::new, |f| format!(" ({f})"))
+                if named.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", named.join(", "))
+                }
             ))?;
             "touch-id"
         }
     };
-    let entry = crate::audit::Reveal {
-        ts: crate::audit::now_rfc3339(),
-        cmd,
-        item,
-        id,
-        field,
-        folder,
-        caller,
-        auth,
-    };
-    if let Err(e) = crate::audit::record(&entry) {
-        log::warn!("failed to write reveal audit log: {e:#}");
+    for field in fields {
+        let entry = crate::audit::Reveal {
+            ts: crate::audit::now_rfc3339(),
+            cmd,
+            item,
+            id,
+            field: *field,
+            folder,
+            caller: caller.clone(),
+            auth,
+        };
+        if let Err(e) = crate::audit::record(&entry) {
+            log::warn!("failed to write reveal audit log: {e:#}");
+        }
     }
     Ok(())
 }

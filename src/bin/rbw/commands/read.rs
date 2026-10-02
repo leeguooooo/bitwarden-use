@@ -172,11 +172,63 @@ fn candidate_matches(
             .any(|(uri, mode)| domain_matches(uri, *mode, target))
 }
 
+/// Name of the custom field holding a login sequence (same name and syntax
+/// as rofi-rbw): steps separated by `:`, e.g. `username:enter:delay:password:enter`.
+pub(super) const AUTOTYPE_FIELD: &str = "_autotype";
+
+/// Parse an `_autotype` value into steps. Keywords are `username`,
+/// `password`, `totp`, `tab`, `enter` and `delay`; any other step names a
+/// custom field and comes back as `custom:<name>`. Only step names are
+/// returned, never values, so the result is safe to print unmasked.
+pub(super) fn parse_autotype(seq: &str) -> anyhow::Result<Vec<String>> {
+    let steps = seq
+        .trim()
+        .split(':')
+        .map(|step| {
+            let step = step.trim();
+            anyhow::ensure!(
+                !step.is_empty(),
+                "empty step in {AUTOTYPE_FIELD}"
+            );
+            let lower = step.to_lowercase();
+            Ok(match lower.as_str() {
+                "username" | "password" | "totp" | "tab" | "enter"
+                | "delay" => lower,
+                _ => format!("custom:{step}"),
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    anyhow::ensure!(
+        steps
+            .iter()
+            .any(|s| !matches!(s.as_str(), "tab" | "enter" | "delay")),
+        "{AUTOTYPE_FIELD} has no field to fill"
+    );
+    Ok(steps)
+}
+
+fn autotype_of(
+    plain: &DecryptedCipher,
+) -> anyhow::Result<Option<Vec<String>>> {
+    plain
+        .fields
+        .iter()
+        .find(|f| f.name.as_deref() == Some(AUTOTYPE_FIELD))
+        .and_then(|f| f.value.as_deref())
+        .filter(|v| !v.trim().is_empty())
+        .map(parse_autotype)
+        .transpose()
+        .with_context(|| {
+            format!("invalid {AUTOTYPE_FIELD} on '{}'", plain.name)
+        })
+}
+
 pub fn domain_login(
     domain: &str,
     name: Option<&str>,
     user: Option<&str>,
     reveal: bool,
+    list: bool,
 ) -> anyhow::Result<()> {
     let target = target_url(domain)?;
     unlock()?;
@@ -186,12 +238,41 @@ pub fn domain_login(
         .iter()
         .map(|entry| Ok((entry, decrypt_search_cipher(entry)?)))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let candidates: Vec<_> = candidates
+    let mut candidates: Vec<_> = candidates
         .into_iter()
         .filter(|(_, c)| candidate_matches(c, &target, name, user))
         .collect();
+    // Most recently used first, then most used; the rest keep vault order.
+    let usage = rbw::audit::usage();
+    candidates.sort_by(|(_, a), (_, b)| {
+        let (a, b) = (usage.get(&a.id), usage.get(&b.id));
+        b.map(|u| &u.last_used)
+            .cmp(&a.map(|u| &u.last_used))
+            .then_with(|| b.map(|u| u.uses).cmp(&a.map(|u| u.uses)))
+    });
+    let summary = |c: &DecryptedSearchCipher| {
+        let u = usage.get(&c.id);
+        json!({
+            "id": c.id,
+            "name": c.name,
+            "folder": c.folder,
+            "username": c.user.as_ref().map(|_| "[redacted]"),
+            "uses": u.map_or(0, |u| u.uses),
+            "last_used": u.map(|u| &u.last_used),
+        })
+    };
+    if list {
+        let list: Vec<_> =
+            candidates.iter().map(|(_, c)| summary(c)).collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({"candidates":list}))?
+        );
+        return Ok(());
+    }
     if candidates.len() != 1 {
-        let list: Vec<_> = candidates.iter().map(|(_, c)| json!({"id":c.id,"name":c.name,"username":"[redacted]"})).collect();
+        let list: Vec<_> =
+            candidates.iter().map(|(_, c)| summary(c)).collect();
         // stdout stays empty on ambiguity, even when --reveal was passed.
         eprintln!(
             "{}",
@@ -200,6 +281,7 @@ pub fn domain_login(
         anyhow::bail!("expected one domain match, found {}; use --name (exact name or UUID) and/or --user", candidates.len());
     }
     let plain = decrypt_cipher(candidates[0].0)?;
+    let autotype = autotype_of(&plain)?;
     if reveal {
         rbw::reveal::authorize(
             "login --domain",
@@ -219,12 +301,27 @@ pub fn domain_login(
         anyhow::bail!("not a login entry");
     };
     let output = if reveal {
-        json!({"id":plain.id,"name":plain.name,"username":username,"password":password,"code":totp.as_deref().map(generate_totp).transpose()?})
+        json!({"id":plain.id,"name":plain.name,"folder":plain.folder,"username":username,"password":password,"code":totp.as_deref().map(generate_totp).transpose()?,"autotype":autotype})
     } else {
-        json!({"id":plain.id,"name":plain.name,"username":username.map(|_| "[redacted]"),"password":password.map(|_| "[redacted]"),"code":totp.map(|_| "[redacted]")})
+        json!({"id":plain.id,"name":plain.name,"folder":plain.folder,"username":username.map(|_| "[redacted]"),"password":password.map(|_| "[redacted]"),"code":totp.map(|_| "[redacted]"),"autotype":autotype})
     };
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+#[test]
+fn autotype_steps() {
+    assert_eq!(
+        parse_autotype("username:Enter:delay:password:enter").unwrap(),
+        ["username", "enter", "delay", "password", "enter"]
+    );
+    assert_eq!(
+        parse_autotype(" username:tab:PIN ").unwrap(),
+        ["username", "tab", "custom:PIN"]
+    );
+    assert!(parse_autotype("username::password").is_err());
+    assert!(parse_autotype("tab:enter").is_err());
+    assert!(parse_autotype("").is_err());
 }
 
 #[test]
