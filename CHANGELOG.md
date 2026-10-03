@@ -1,3 +1,7 @@
+# 0.8.3
+
+- macOS release binaries are signed with a Developer ID (Team ID `6ZPXG4KVVS`) instead of 0.8.1's self-signed certificate. 0.8.1's note was wrong: a fixed self-signed signature keeps the Keychain ACL entry valid, but the Keychain's partition list identifies binaries without a Team ID by their per-build cdhash, so every upgrade still asked again. With a Team ID it does not. Allow the agent once after installing 0.8.3 ("Always Allow"); later upgrades keep unattended unlocks working.
+
 # 0.8.2
 
 - Docs: the README and the skill say that `chrome-use auth login --bwu` needs chrome-use 1.5.155 or newer (earlier versions could submit an empty two-factor form first).
