@@ -228,7 +228,7 @@ can find using the instructions
 
 ### Logging in to websites
 
-[chrome-use](https://github.com/leeguooooo/chrome-use) 1.5.153+ logs in with
+[chrome-use](https://github.com/leeguooooo/chrome-use) 1.5.155+ logs in with
 your vault when `bwu` is installed:
 
 ```sh

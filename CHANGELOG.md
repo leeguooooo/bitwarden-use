@@ -1,3 +1,7 @@
+# 0.8.2
+
+- Docs: the README and the skill say that `chrome-use auth login --bwu` needs chrome-use 1.5.155 or newer (earlier versions could submit an empty two-factor form first).
+
 # 0.8.1
 
 - macOS release binaries are signed with a fixed self-signed certificate (identifiers `com.leeguooooo.bitwarden-use` and `com.leeguooooo.bitwarden-use-agent`), instead of an ad-hoc signature that changed with every build. The Keychain matches an "Always Allow" against that signature, so the permission now survives upgrades: allow the agent once, and unattended Keychain unlocks (`require_touch_id false`) keep working after `upgrade` or the plugin's automatic one.
