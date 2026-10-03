@@ -1386,8 +1386,11 @@ pub fn fido2_get(
             fido2_credentials, ..
         } = &entry.data
         {
+            // credential ids are EncStrings in the vault: compare decrypted
             if fido2_credentials.iter().any(|cred| {
-                cred.credential_id.as_deref() == Some(needle_str.as_str())
+                decrypt_fido2_field(cred.credential_id.as_deref(), entry)
+                    .as_deref()
+                    == Some(needle_str.as_str())
             }) {
                 id_matches.push(entry.clone());
             }
@@ -1770,6 +1773,79 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 // The decrypted KeyValue is a base64url-encoded PKCS#8 private key. Decode it
 // back to DER and re-wrap it as a standard PKCS#8 PEM document.
+/// A login's passkeys as JSON in the shape of Chrome's
+/// `WebAuthn.addCredential` (binary fields standard base64), for `run --env
+/// VAR=ITEM#passkeys`: a browser automation loads them into a virtual
+/// authenticator, so the site's own WebAuthn ceremony signs with them.
+fn passkeys_for_browser(
+    entry: &rbw::db::Entry,
+    name: &str,
+) -> anyhow::Result<String> {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let rbw::db::EntryData::Login {
+        fido2_credentials, ..
+    } = &entry.data
+    else {
+        anyhow::bail!("entry '{name}' is not a login entry");
+    };
+    anyhow::ensure!(
+        !fido2_credentials.is_empty(),
+        "entry '{name}' has no passkeys"
+    );
+    let mut out = Vec::with_capacity(fido2_credentials.len());
+    for cred in fido2_credentials {
+        let field = |f: Option<&String>| {
+            decrypt_fido2_field(f.map(String::as_str), entry)
+        };
+        let id = field(cred.credential_id.as_ref())
+            .context("passkey has no credential id")?;
+        let key = field(cred.key_value.as_ref())
+            .context("passkey has no decryptable private key")?;
+        let user_handle = field(cred.user_handle.as_ref())
+            .filter(|h| !h.is_empty())
+            .map(|h| decode_key_value(&h))
+            .transpose()
+            .context("passkey user handle is not base64url")?;
+        out.push(serde_json::json!({
+            "credentialId": b64.encode(credential_id_bytes(&id)?),
+            "rpId": field(cred.rp_id.as_ref()),
+            "privateKey": b64.encode(decode_key_value(&key)?),
+            "userHandle": user_handle.map(|h| b64.encode(h)),
+            "signCount": field(cred.counter.as_ref())
+                .and_then(|c| c.parse::<u32>().ok())
+                .unwrap_or(0),
+            "isResidentCredential": field(cred.discoverable.as_ref())
+                .is_some_and(|d| d.eq_ignore_ascii_case("true")),
+        }));
+    }
+    Ok(serde_json::to_string(&out)?)
+}
+
+/// Raw credential id bytes. Bitwarden stores a passkey's id as a GUID (its
+/// 16 bytes) or, for ids that are not GUIDs, as `b64.` + base64url.
+fn credential_id_bytes(id: &str) -> anyhow::Result<Vec<u8>> {
+    if let Some(b) = id.strip_prefix("b64.") {
+        return decode_key_value(b);
+    }
+    if let Ok(u) = uuid::Uuid::parse_str(id) {
+        return Ok(u.as_bytes().to_vec());
+    }
+    decode_key_value(id)
+}
+
+#[test]
+fn credential_ids_decode_like_bitwarden() {
+    assert_eq!(
+        credential_id_bytes("0b47d74f-0423-43b7-a13f-a7c7b1bf2c02").unwrap(),
+        [
+            0x0b, 0x47, 0xd7, 0x4f, 0x04, 0x23, 0x43, 0xb7, 0xa1, 0x3f, 0xa7,
+            0xc7, 0xb1, 0xbf, 0x2c, 0x02
+        ]
+    );
+    assert_eq!(credential_id_bytes("b64.AQID").unwrap(), [1, 2, 3]);
+}
+
 fn fido2_private_key_pem(key_value_b64url: &str) -> anyhow::Result<String> {
     use base64::Engine as _;
 
@@ -2347,7 +2423,7 @@ impl DecryptedCipher {
                         DecryptedData::Login { totp: Some(totp), .. },
                     ) => Some(generate_totp(totp)?),
                     (None, Ok(_), _) => anyhow::bail!(
-                        "field '{f}' is not supported by run; use password, username, notes, totp or custom:<name>"
+                        "field '{f}' is not supported by run; use password, username, notes, totp, passkeys or custom:<name>"
                     ),
                     _ => {
                         let name = custom.unwrap_or(f);
@@ -2396,7 +2472,9 @@ fn parse_env_spec(spec: &str) -> anyhow::Result<EnvSpec> {
     let target = target.strip_prefix("bw:").unwrap_or(target);
     let (needle, field) = match target.rsplit_once('#') {
         Some((n, f))
-            if f.starts_with("custom:") || f.parse::<Field>().is_ok() =>
+            if f.starts_with("custom:")
+                || f == "passkeys"
+                || f.parse::<Field>().is_ok() =>
         {
             (n, Some(f.to_string()))
         }
@@ -2430,31 +2508,33 @@ pub fn run(
     for spec in &specs {
         let needle =
             parse_needle(&spec.needle).unwrap_or_else(|e| match e {});
-        let (_, decrypted) = find_entry(&db, needle, None, folder, false)
+        let (entry, decrypted) = find_entry(&db, needle, None, folder, false)
             .with_context(|| {
                 format!("couldn't find entry for '{}'", spec.needle)
             })?;
-        found.push((spec, decrypted));
+        found.push((spec, entry, decrypted));
     }
     // Resolve every value first: a missing field fails before any prompt.
     let mut vars = Vec::with_capacity(found.len());
-    for (spec, decrypted) in &found {
-        vars.push((
-            spec.var.clone(),
-            decrypted.secret_value(spec.field.as_deref())?,
-        ));
+    for (spec, entry, decrypted) in &found {
+        let value = if spec.field.as_deref() == Some("passkeys") {
+            passkeys_for_browser(entry, &decrypted.name)?
+        } else {
+            decrypted.secret_value(spec.field.as_deref())?
+        };
+        vars.push((spec.var.clone(), value));
     }
     // One confirmation per item, however many of its fields are injected
     // (a login's username, password and totp ask once).
     let mut seen = std::collections::HashSet::new();
-    for (_, item) in &found {
+    for (_, _, item) in &found {
         if !seen.insert(item.id.as_str()) {
             continue;
         }
         let fields: Vec<_> = found
             .iter()
-            .filter(|(_, d)| d.id == item.id)
-            .map(|(s, _)| s.field.as_deref())
+            .filter(|(_, _, d)| d.id == item.id)
+            .map(|(s, _, _)| s.field.as_deref())
             .collect();
         rbw::reveal::authorize_fields(
             "run",
@@ -2466,7 +2546,7 @@ pub fn run(
     }
     // A one-time code is generated again now: the prompt above may have
     // taken long enough for the first one to expire.
-    for ((_, value), (spec, decrypted)) in vars.iter_mut().zip(&found) {
+    for ((_, value), (spec, _, decrypted)) in vars.iter_mut().zip(&found) {
         if spec.field.as_deref() == Some("totp") {
             *value = decrypted.secret_value(Some("totp"))?;
         }
@@ -2507,6 +2587,11 @@ mod run_tests {
         assert_eq!(s.field.as_deref(), Some("custom:api key"));
         let s = parse_env_spec("U=github#username").unwrap();
         assert_eq!(s.field.as_deref(), Some("username"));
+        let s = parse_env_spec(
+            "PK=bw:11111111-2222-3333-4444-555555555555#passkeys",
+        )
+        .unwrap();
+        assert_eq!(s.field.as_deref(), Some("passkeys"));
         let s = parse_env_spec("X=wifi #2").unwrap();
         assert_eq!((s.needle.as_str(), s.field), ("wifi #2", None));
         assert!(parse_env_spec("router").is_err());

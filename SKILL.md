@@ -132,6 +132,11 @@ fills it through `run`. Doing it by hand:
    Touch ID prompt for the item. Fetch `#totp` in a separate `run` when the code field appears,
    so the code is fresh.
 
+Passkeys: `login --domain` reports `passkeys` (a count). With chrome-use 1.5.157+, `auth login --bwu`
+answers a passkey / security-key second factor with it, and `auth login --bwu --passkey` signs in
+with the passkey alone. By hand: `bwu run --env PK=bw:<uuid>#passkeys -- <tool>` (JSON for Chrome's
+`WebAuthn.addCredential`; it contains the private key, so it goes only into the consuming process).
+
 `get --clipboard` (needs `--reveal`) copies a value that is hidden from clipboard history and
 cleared after `clipboard_clear_after` seconds (default 30). Prefer `run`; copy only when the user
 wants to paste it themselves.

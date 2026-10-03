@@ -262,6 +262,15 @@ username:enter:delay:password:enter
 `login --domain` returns the parsed steps as `autotype` (step names only, so
 they appear unmasked).
 
+Passkeys work the same way. `login --domain` says how many the item has
+(`passkeys`), and `run --env PK=bw:<uuid>#passkeys` hands them to a browser
+automation as JSON for Chrome's virtual authenticator, so the site's own
+WebAuthn ceremony signs with the vault key. chrome-use does this in
+`auth login --bwu` (passkey as second factor) and `auth login --bwu --passkey`
+(sign in with the passkey alone). The signature counter the site sees stays
+the vault's (0 for a synced passkey), the same as the Bitwarden extension
+reports.
+
 ### FIDO2 / passkeys
 
 `bitwarden-use fido2` works with FIDO2 (passkey) credentials stored in your

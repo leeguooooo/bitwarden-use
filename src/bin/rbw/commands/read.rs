@@ -282,6 +282,14 @@ pub fn domain_login(
     }
     let plain = decrypt_cipher(candidates[0].0)?;
     let autotype = autotype_of(&plain)?;
+    // How many passkeys the item holds (never their keys): a browser
+    // automation asks `run --env VAR=ITEM#passkeys` only when there are some.
+    let passkeys = match &candidates[0].0.data {
+        rbw::db::EntryData::Login {
+            fido2_credentials, ..
+        } => fido2_credentials.len(),
+        _ => 0,
+    };
     if reveal {
         rbw::reveal::authorize(
             "login --domain",
@@ -301,9 +309,9 @@ pub fn domain_login(
         anyhow::bail!("not a login entry");
     };
     let output = if reveal {
-        json!({"id":plain.id,"name":plain.name,"folder":plain.folder,"username":username,"password":password,"code":totp.as_deref().map(generate_totp).transpose()?,"autotype":autotype})
+        json!({"id":plain.id,"name":plain.name,"folder":plain.folder,"username":username,"password":password,"code":totp.as_deref().map(generate_totp).transpose()?,"autotype":autotype,"passkeys":passkeys})
     } else {
-        json!({"id":plain.id,"name":plain.name,"folder":plain.folder,"username":username.map(|_| "[redacted]"),"password":password.map(|_| "[redacted]"),"code":totp.map(|_| "[redacted]"),"autotype":autotype})
+        json!({"id":plain.id,"name":plain.name,"folder":plain.folder,"username":username.map(|_| "[redacted]"),"password":password.map(|_| "[redacted]"),"code":totp.map(|_| "[redacted]"),"autotype":autotype,"passkeys":passkeys})
     };
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())

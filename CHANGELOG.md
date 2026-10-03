@@ -1,3 +1,9 @@
+# 0.9.0
+
+- `run --env VAR=ITEM#passkeys`: the item's passkeys as JSON in the shape of Chrome's `WebAuthn.addCredential` (credentialId, rpId, PKCS#8 privateKey, userHandle, signCount, isResidentCredential; binary fields in standard base64). chrome-use 1.5.157+ loads them into a virtual authenticator for `auth login --bwu`, so a site's passkey sign-in or passkey/security-key second factor is answered by Chrome itself. Same confirmation and audit as any `run` field (`field: "passkeys"`).
+- `login --domain` reports how many passkeys the matched item has (`passkeys`, a count; never the keys).
+- `fido2 get <credentialId>` finds the passkey again: it compared the still-encrypted stored id, so lookup by credential id never matched.
+
 # 0.8.3
 
 - macOS release binaries are signed with a Developer ID (Team ID `6ZPXG4KVVS`) instead of 0.8.1's self-signed certificate. 0.8.1's note was wrong: a fixed self-signed signature keeps the Keychain ACL entry valid, but the Keychain's partition list identifies binaries without a Team ID by their per-build cdhash, so every upgrade still asked again. With a Team ID it does not. Allow the agent once after installing 0.8.3 ("Always Allow"); later upgrades keep unattended unlocks working.
