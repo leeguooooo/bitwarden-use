@@ -72,7 +72,11 @@ jobs:
           security import "$RUNNER_TEMP/sign.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign >/dev/null
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kpw" "$kc" >/dev/null
           rm -f "$RUNNER_TEMP/sign.p12"
-          id="Developer ID Application: LI GUO (6ZPXG4KVVS)"
+          # codesign resolves the identity (and its G2 intermediate, bundled in
+          # the p12) through the search list.
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$kc"
+          id=35668FD959322E9E0D7D8E14FC209CE37825EC4C   # Developer ID Application: LI GUO (6ZPXG4KVVS)
           for bin in bitwarden-use bitwarden-use-agent; do
             f="target/${{ matrix.target }}/release/$bin"
             codesign -f -s "$id" --keychain "$kc" --timestamp -i "com.leeguooooo.$bin" "$f"
