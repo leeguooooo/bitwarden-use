@@ -1,3 +1,10 @@
+# 0.9.1
+
+- Fix: the agent crashed (SIGBUS in Security.framework) whenever it stored the master password in the macOS login keychain, so `unlock --keychain-store` never worked and the agent vanished (`failed to parse message from agent: EOF`). The agent used to fork without exec to go to the background, which is not safe for Apple frameworks; it now re-executes itself with `--no-daemonize` in a new session and acknowledges startup over a pipe ("already running" is still exit code 23).
+- Simpler unlock on macOS: `unlock_with_keychain` is on by default. `bwu unlock` reads the login keychain first (Touch ID if `require_touch_id` is set) and, after a typed unlock, remembers the master password there — no more `--keychain` / `--keychain-store` to remember. Existing configs keep their explicit setting (`bwu config set unlock_with_keychain true` to opt in).
+- No terminal, no problem: with the default `pinentry` and no TTY (agents, scripts, AI tools) the master password is asked with a native macOS dialog instead of failing with "Inappropriate ioctl for device".
+- Messages say `bwu …` instead of the inherited `rbw …`, and the password prompt says "Unlock your Bitwarden vault (bitwarden-use)" instead of naming the internal `rbw` profile.
+
 # 0.9.0
 
 - `run --env VAR=ITEM#passkeys`: the item's passkeys as JSON in the shape of Chrome's `WebAuthn.addCredential` (credentialId, rpId, PKCS#8 privateKey, userHandle, signCount, isResidentCredential; binary fields in standard base64). chrome-use 1.5.157+ loads them into a virtual authenticator for `auth login --bwu`, so a site's passkey sign-in or passkey/security-key second factor is answered by Chrome itself. Same confirmation and audit as any `run` field (`field: "passkeys"`).

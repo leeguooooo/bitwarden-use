@@ -56,7 +56,9 @@ impl Default for Config {
             sync_interval: default_sync_interval(),
             pinentry: default_pinentry(),
             reveal_folders: Vec::new(),
-            unlock_with_keychain: false,
+            // macOS: `bwu unlock` reads the login keychain first and remembers
+            // the master password there after a typed unlock.
+            unlock_with_keychain: cfg!(target_os = "macos"),
             lock_on_screen_lock: default_lock_on_screen_lock(),
             clipboard_clear_after: default_clipboard_clear_after(),
             require_touch_id: default_require_touch_id(),

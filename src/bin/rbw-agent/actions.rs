@@ -409,8 +409,9 @@ async fn unlock_state(
         let mut err_msg = None;
         // Explicit `unlock --keychain`, or `unlock_with_keychain` for ordinary
         // unlocks (which fall back to pinentry if the keychain path fails).
-        let mut use_keychain = keychain == Some(false)
-            || (keychain.is_none() && config_unlock_with_keychain().await?);
+        let remember =
+            keychain.is_none() && config_unlock_with_keychain().await?;
+        let mut use_keychain = keychain == Some(false) || remember;
         for i in 1_u8..=3 {
             let err = if i > 1 {
                 // this unwrap is safe because we only ever continue the loop
@@ -433,16 +434,14 @@ async fn unlock_state(
             } else {
                 None
             };
+            let typed = from_keychain.is_none();
             let password = if let Some(p) = from_keychain {
                 p
             } else {
                 rbw::pinentry::getpin(
                     &config_pinentry().await?,
                     "Master Password",
-                    &format!(
-                        "Unlock the local database for '{}'",
-                        rbw::dirs::profile()
-                    ),
+                    &unlock_prompt(),
                     err.as_deref(),
                     environment,
                     true,
@@ -464,6 +463,11 @@ async fn unlock_state(
                 Ok((keys, org_keys)) => {
                     if keychain == Some(true) {
                         rbw::keychain::store(&password)?;
+                    } else if remember && typed {
+                        // next `bwu unlock` needs no prompt; never fail the unlock over it
+                        if let Err(e) = rbw::keychain::store(&password) {
+                            eprintln!("could not remember the master password in the keychain: {e:#}");
+                        }
                     }
                     unlock_success(state, keys, org_keys).await?;
                     break;
@@ -1040,4 +1044,15 @@ pub async fn unlock_keychain(
     anyhow::ensure!(cfg!(target_os = "macos"), "--keychain requires macOS");
     unlock_state(state, environment, Some(store)).await?;
     respond_ack(sock).await
+}
+
+/// What the password prompt says. The on-disk profile is named "rbw" for
+/// compatibility; users only ever see bitwarden-use and their own profile name.
+fn unlock_prompt() -> String {
+    match rbw::dirs::profile().strip_prefix("rbw-") {
+        Some(profile) => format!(
+            "Unlock your Bitwarden vault (bitwarden-use profile '{profile}')"
+        ),
+        None => "Unlock your Bitwarden vault (bitwarden-use)".to_string(),
+    }
 }

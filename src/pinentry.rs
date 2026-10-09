@@ -12,6 +12,16 @@ pub async fn getpin(
     environment: &crate::protocol::Environment,
     grab: bool,
 ) -> Result<crate::locked::Password> {
+    // The default curses/tty pinentry needs a terminal. Called from an agent,
+    // a script or an AI tool there is none ("Inappropriate ioctl for device"),
+    // so on macOS ask with a native dialog instead.
+    #[cfg(target_os = "macos")]
+    if environment.tty().is_none()
+        && (pinentry.is_empty() || pinentry == "pinentry")
+    {
+        return macos_dialog(desc, err).await;
+    }
+
     let mut opts = tokio::process::Command::new(pinentry);
     opts.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped());
@@ -94,6 +104,63 @@ pub async fn getpin(
         .await
         .map_err(|source| Error::PinentryWait { source })?;
 
+    Ok(crate::locked::Password::new(buf))
+}
+
+#[cfg(target_os = "macos")]
+async fn macos_dialog(
+    desc: &str,
+    err: Option<&str>,
+) -> Result<crate::locked::Password> {
+    use tokio::io::AsyncReadExt as _;
+
+    let message = err
+        .map_or_else(|| desc.to_string(), |err| format!("{err}\n\n{desc}"));
+    // The message travels as an argument, never spliced into the script.
+    let mut child = tokio::process::Command::new("/usr/bin/osascript")
+        .args([
+            "-e", "on run argv",
+            "-e", "set r to display dialog (item 1 of argv) with title \"bitwarden-use\" default answer \"\" with hidden answer buttons {\"Cancel\", \"Unlock\"} default button \"Unlock\" cancel button \"Cancel\" with icon caution",
+            "-e", "return text returned of r",
+            "-e", "end run",
+        ])
+        .arg(message)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|source| Error::Spawn { source })?;
+
+    let mut buf = crate::locked::Vec::new();
+    buf.zero();
+    let mut len = 0;
+    // unwrap is safe: stdout is piped above
+    let stdout = child.stdout.as_mut().unwrap();
+    loop {
+        let n = stdout
+            .read(&mut buf.data_mut()[len..])
+            .await
+            .map_err(|source| Error::PinentryReadOutput { source })?;
+        if n == 0 {
+            break;
+        }
+        len += n;
+        if len == buf.data().len() {
+            break;
+        }
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|source| Error::PinentryWait { source })?;
+    if !status.success() {
+        // Cancel button / Escape
+        return Err(Error::PinentryCancelled);
+    }
+    while len > 0 && matches!(buf.data()[len - 1], b'\n' | b'\r') {
+        len -= 1;
+    }
+    buf.truncate(len);
     Ok(crate::locked::Password::new(buf))
 }
 

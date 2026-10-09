@@ -814,7 +814,7 @@ fn main() {
             Ok(())
         }
     }
-    .with_context(|| format!("rbw {subcommand_name}"));
+    .with_context(|| format!("bwu {subcommand_name}"));
 
     if let Err(e) = res {
         eprintln!("{e:#}");
