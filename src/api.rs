@@ -2019,7 +2019,8 @@ mod compat_tests {
             fido2_credentials: None,
         };
         let json = serde_json::to_value(&login).unwrap();
-        let keys: Vec<_> = json.as_object().unwrap().keys().collect();
+        let mut keys: Vec<_> = json.as_object().unwrap().keys().collect();
+        keys.sort();
         assert_eq!(keys, ["password", "totp", "uris", "username"]);
         let uri = &json["uris"][0];
         assert!(uri.get("uri").is_some() && uri.get("match").is_some());

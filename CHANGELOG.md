@@ -1,3 +1,8 @@
+# Unreleased
+
+- Fix: `sync` (and every command behind it) hung when the notifications server accepted the connection but never finished the websocket handshake, e.g. NodeWarden reached directly while only a proxy works. `sync` now replies once the vault is saved; notifications connect in the background with a 10 s timeout, through `http_proxy` / `https_proxy` / `NO_PROXY` and the client certificate like every other request, and send the access token as an `Authorization` header as well (NodeWarden ignores the query parameter).
+- Fix: on NodeWarden, logins created with `bwu add --uri` broke every later sync with ``duplicate field `Uris` ``. Logins are now written in camelCase like the official clients, and logins already stored with both spellings sync again.
+
 # 0.9.2
 
 - `get`: emit one hint on stderr when nonempty values are masked, pointing to `--reveal` and `bwu run --env VAR=ITEM -- <command>`. Stdout and exit codes are unchanged. Help and agent documentation now explain the literal `[redacted]` default.
