@@ -6,19 +6,20 @@ pub enum Message {
     Logout,
 }
 
+type WsStream = tokio_tungstenite::WebSocketStream<reqwest::Upgraded>;
+type WsSink = futures_util::stream::SplitSink<
+    WsStream,
+    tokio_tungstenite::tungstenite::Message,
+>;
+type SendingChannels = std::sync::Arc<
+    tokio::sync::RwLock<Vec<tokio::sync::mpsc::UnboundedSender<Message>>>,
+>;
+
 pub struct Handler {
-    write: Option<
-        futures::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<
-                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-            >,
-            tokio_tungstenite::tungstenite::Message,
-        >,
-    >,
+    write: Option<WsSink>,
     read_handle: Option<tokio::task::JoinHandle<()>>,
-    sending_channels: std::sync::Arc<
-        tokio::sync::RwLock<Vec<tokio::sync::mpsc::UnboundedSender<Message>>>,
-    >,
+    sending_channels: SendingChannels,
+    connecting: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Handler {
@@ -29,46 +30,48 @@ impl Handler {
             sending_channels: std::sync::Arc::new(tokio::sync::RwLock::new(
                 Vec::new(),
             )),
+            connecting: std::sync::Arc::new(
+                std::sync::atomic::AtomicBool::new(false),
+            ),
         }
     }
 
-    pub async fn connect(
-        &mut self,
-        url: String,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if self.is_connected() {
-            self.disconnect().await?;
+    /// Claim the right to open a connection. Returns None when one is
+    /// already open or another task is opening it; the claim is released
+    /// when the returned guard drops.
+    pub fn begin_connect(&self) -> Option<ConnectGuard> {
+        if self.is_connected()
+            || self
+                .connecting
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return None;
         }
+        Some(ConnectGuard {
+            connecting: self.connecting.clone(),
+            sending_channels: self.sending_channels.clone(),
+        })
+    }
 
-        let (write, read_handle) =
-            subscribe_to_notifications(url, self.sending_channels.clone())
-                .await?;
-
+    /// Install a connection opened with `connect`. The receivers handed out
+    /// by `get_channel` stay subscribed.
+    pub fn install(
+        &mut self,
+        (write, read_handle): (WsSink, tokio::task::JoinHandle<()>),
+    ) {
+        if let Some(old) = self.read_handle.take() {
+            old.abort();
+        }
         self.write = Some(write);
         self.read_handle = Some(read_handle);
-        Ok(())
     }
 
     pub fn is_connected(&self) -> bool {
         self.write.is_some()
-            && self.read_handle.is_some()
-            && !self.read_handle.as_ref().unwrap().is_finished()
-    }
-
-    pub async fn disconnect(
-        &mut self,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.sending_channels.write().await.clear();
-        if let Some(mut write) = self.write.take() {
-            write
-                .send(tokio_tungstenite::tungstenite::Message::Close(None))
-                .await?;
-            write.close().await?;
-            self.read_handle.take().unwrap().await?;
-        }
-        self.write = None;
-        self.read_handle = None;
-        Ok(())
+            && self
+                .read_handle
+                .as_ref()
+                .is_some_and(|handle| !handle.is_finished())
     }
 
     pub async fn get_channel(
@@ -80,57 +83,68 @@ impl Handler {
     }
 }
 
-async fn subscribe_to_notifications(
-    url: String,
-    sending_channels: std::sync::Arc<
-        tokio::sync::RwLock<Vec<tokio::sync::mpsc::UnboundedSender<Message>>>,
-    >,
-) -> Result<
-    (
-        futures_util::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<
-                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-            >,
-            tokio_tungstenite::tungstenite::Message,
-        >,
-        tokio::task::JoinHandle<()>,
-    ),
-    Box<dyn std::error::Error>,
-> {
-    let url = url::Url::parse(url.as_str())?;
-    let (ws_stream, _response) =
-        tokio_tungstenite::connect_async(url).await?;
-    let (mut write, read) = ws_stream.split();
+pub struct ConnectGuard {
+    connecting: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    sending_channels: SendingChannels,
+}
 
-    write
-        .send(tokio_tungstenite::tungstenite::Message::Text(
-            "{\"protocol\":\"messagepack\",\"version\":1}\x1e".into(),
-        ))
-        .await
-        .unwrap();
+impl ConnectGuard {
+    /// Open the websocket and start reading from it. Runs without the agent
+    /// state lock held, so a slow or silent server does not block other
+    /// commands.
+    pub async fn connect(
+        &self,
+        access_token: &str,
+    ) -> anyhow::Result<(WsSink, tokio::task::JoinHandle<()>)> {
+        let upgraded =
+            rbw::actions::notifications_websocket(access_token).await?;
+        let ws_stream = WsStream::from_raw_socket(
+            upgraded,
+            tokio_tungstenite::tungstenite::protocol::Role::Client,
+            None,
+        )
+        .await;
+        let (mut write, read) = ws_stream.split();
 
-    let read_future = async move {
-        let sending_channels = &sending_channels;
-        read.for_each(|message| async move {
-            match message {
-                Ok(message) => {
-                    if let Some(message) = parse_message(message) {
-                        let sending_channels = sending_channels.read().await;
-                        let sending_channels = sending_channels.as_slice();
-                        for channel in sending_channels {
-                            channel.send(message).unwrap();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                "{\"protocol\":\"messagepack\",\"version\":1}\x1e".into(),
+            ))
+            .await?;
+
+        let sending_channels = self.sending_channels.clone();
+        let read_future = async move {
+            let sending_channels = &sending_channels;
+            read.for_each(|message| async move {
+                match message {
+                    Ok(message) => {
+                        if let Some(message) = parse_message(message) {
+                            let sending_channels =
+                                sending_channels.read().await;
+                            let sending_channels =
+                                sending_channels.as_slice();
+                            for channel in sending_channels {
+                                channel.send(message).unwrap();
+                            }
                         }
                     }
+                    Err(e) => {
+                        eprintln!("websocket error: {e:?}");
+                    }
                 }
-                Err(e) => {
-                    eprintln!("websocket error: {e:?}");
-                }
-            }
-        })
-        .await;
-    };
+            })
+            .await;
+        };
 
-    Ok((write, tokio::spawn(read_future)))
+        Ok((write, tokio::spawn(read_future)))
+    }
+}
+
+impl Drop for ConnectGuard {
+    fn drop(&mut self) {
+        self.connecting
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 fn parse_message(

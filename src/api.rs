@@ -406,7 +406,12 @@ struct SyncResCipher {
     organization_id: Option<String>,
     #[serde(rename = "Name", alias = "name")]
     name: String,
-    #[serde(rename = "Login", alias = "login")]
+    #[serde(
+        rename = "Login",
+        alias = "login",
+        default,
+        deserialize_with = "deserialize_login"
+    )]
     login: Option<CipherLogin>,
     #[serde(rename = "Card", alias = "card")]
     card: Option<CipherCard>,
@@ -603,22 +608,25 @@ struct SyncResFolder {
     name: String,
 }
 
+// written in camelCase like the official clients do. servers that keep the
+// incoming keys and add their own camelCase copy (nodewarden) would otherwise
+// hand back both `Uris` and `uris`; see `deserialize_login` for reading those.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct CipherLogin {
-    #[serde(rename = "Username", alias = "username")]
+    #[serde(rename = "username", alias = "Username")]
     username: Option<String>,
-    #[serde(rename = "Password", alias = "password")]
+    #[serde(rename = "password", alias = "Password")]
     password: Option<String>,
-    #[serde(rename = "Totp", alias = "totp")]
+    #[serde(rename = "totp", alias = "Totp")]
     totp: Option<String>,
-    #[serde(rename = "Uris", alias = "uris")]
+    #[serde(rename = "uris", alias = "Uris")]
     uris: Option<Vec<CipherLoginUri>>,
     // passkeys / webauthn credentials attached to this login. these are
     // dropped on serialization (skip_serializing_if) so that editing a login
     // through rbw does not accidentally clear them on the server.
     #[serde(
-        rename = "Fido2Credentials",
-        alias = "fido2Credentials",
+        rename = "fido2Credentials",
+        alias = "Fido2Credentials",
         default,
         skip_serializing_if = "Option::is_none"
     )]
@@ -627,9 +635,9 @@ struct CipherLogin {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct CipherLoginUri {
-    #[serde(rename = "Uri", alias = "uri")]
+    #[serde(rename = "uri", alias = "Uri")]
     uri: Option<String>,
-    #[serde(rename = "Match", alias = "match")]
+    #[serde(rename = "match", alias = "Match")]
     match_type: Option<UriMatchType>,
 }
 
@@ -639,31 +647,77 @@ struct CipherLoginUri {
 // the agent just like username/password.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct CipherLoginFido2 {
-    #[serde(rename = "CredentialId", alias = "credentialId", default)]
+    #[serde(rename = "credentialId", alias = "CredentialId", default)]
     credential_id: Option<String>,
-    #[serde(rename = "KeyType", alias = "keyType", default)]
+    #[serde(rename = "keyType", alias = "KeyType", default)]
     key_type: Option<String>,
-    #[serde(rename = "KeyAlgorithm", alias = "keyAlgorithm", default)]
+    #[serde(rename = "keyAlgorithm", alias = "KeyAlgorithm", default)]
     key_algorithm: Option<String>,
-    #[serde(rename = "KeyCurve", alias = "keyCurve", default)]
+    #[serde(rename = "keyCurve", alias = "KeyCurve", default)]
     key_curve: Option<String>,
     // PKCS#8 private key, base64url-encoded then encrypted (EncString).
-    #[serde(rename = "KeyValue", alias = "keyValue", default)]
+    #[serde(rename = "keyValue", alias = "KeyValue", default)]
     key_value: Option<String>,
-    #[serde(rename = "RpId", alias = "rpId", default)]
+    #[serde(rename = "rpId", alias = "RpId", default)]
     rp_id: Option<String>,
-    #[serde(rename = "RpName", alias = "rpName", default)]
+    #[serde(rename = "rpName", alias = "RpName", default)]
     rp_name: Option<String>,
-    #[serde(rename = "UserHandle", alias = "userHandle", default)]
+    #[serde(rename = "userHandle", alias = "UserHandle", default)]
     user_handle: Option<String>,
-    #[serde(rename = "UserName", alias = "userName", default)]
+    #[serde(rename = "userName", alias = "UserName", default)]
     user_name: Option<String>,
-    #[serde(rename = "Counter", alias = "counter", default)]
+    #[serde(rename = "counter", alias = "Counter", default)]
     counter: Option<String>,
-    #[serde(rename = "Discoverable", alias = "discoverable", default)]
+    #[serde(rename = "discoverable", alias = "Discoverable", default)]
     discoverable: Option<String>,
-    #[serde(rename = "CreationDate", alias = "creationDate", default)]
+    #[serde(rename = "creationDate", alias = "CreationDate", default)]
     creation_date: Option<String>,
+}
+
+// Read a login that may carry the same field twice in different case (`Uris`
+// and `uris`), which serde would otherwise reject as a duplicate field and
+// fail the whole sync. The camelCase copy wins unless it is null.
+fn deserialize_login<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<CipherLogin>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize as _;
+
+    fn camel_keys(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let mut out = serde_json::Map::new();
+                for (key, value) in map {
+                    let mut chars = key.chars();
+                    let camel = chars.next().map_or_else(String::new, |c| {
+                        c.to_ascii_lowercase().to_string() + chars.as_str()
+                    });
+                    let value = camel_keys(value);
+                    let keep_existing =
+                        out.get(&camel).is_some_and(|existing| {
+                            value.is_null()
+                                || (!existing.is_null() && key != camel)
+                        });
+                    if !keep_existing {
+                        out.insert(camel, value);
+                    }
+                }
+                serde_json::Value::Object(out)
+            }
+            serde_json::Value::Array(values) => serde_json::Value::Array(
+                values.into_iter().map(camel_keys).collect(),
+            ),
+            value => value,
+        }
+    }
+
+    Option::<serde_json::Value>::deserialize(deserializer)?
+        .filter(|value| !value.is_null())
+        .map(|value| serde_json::from_value(camel_keys(value)))
+        .transpose()
+        .map_err(serde::de::Error::custom)
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -928,6 +982,77 @@ impl Client {
                 .build()
                 .map_err(|e| Error::CreateReqwestClient { source: e })?)
         }
+    }
+
+    /// Open the notifications websocket over the same HTTP client the api
+    /// requests use, so proxies from the environment, the client certificate
+    /// and the TLS roots all apply to it too.
+    pub async fn notifications_websocket(
+        &self,
+        notifications_url: &str,
+        access_token: &str,
+    ) -> Result<reqwest::Upgraded> {
+        use tokio_tungstenite::tungstenite::handshake::{
+            client::generate_key, derive_accept_key,
+        };
+
+        // the token goes in both places: vaultwarden and the official server
+        // read the query parameter, nodewarden only reads the header
+        let url = format!(
+            "{}/hub?access_token={access_token}",
+            notifications_url.trim_end_matches('/')
+        )
+        .replacen("wss://", "https://", 1)
+        .replacen("ws://", "http://", 1);
+        let key = generate_key();
+        let res = self
+            .reqwest_client()
+            .await?
+            .get(url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {access_token}"),
+            )
+            .header(reqwest::header::CONNECTION, "Upgrade")
+            .header(reqwest::header::UPGRADE, "websocket")
+            .header(reqwest::header::SEC_WEBSOCKET_VERSION, "13")
+            .header(reqwest::header::SEC_WEBSOCKET_KEY, &key)
+            .send()
+            .await
+            .map_err(|source| Error::Reqwest { source })?;
+        if res.status() != reqwest::StatusCode::SWITCHING_PROTOCOLS {
+            return Err(Error::WebsocketHandshake {
+                message: format!("server answered {}", res.status()),
+            });
+        }
+        let header = |name: reqwest::header::HeaderName| {
+            res.headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string()
+        };
+        if !header(reqwest::header::UPGRADE).eq_ignore_ascii_case("websocket")
+            || !header(reqwest::header::CONNECTION)
+                .split(',')
+                .any(|v| v.trim().eq_ignore_ascii_case("upgrade"))
+        {
+            return Err(Error::WebsocketHandshake {
+                message: "missing upgrade headers in the response"
+                    .to_string(),
+            });
+        }
+        if header(reqwest::header::SEC_WEBSOCKET_ACCEPT)
+            != derive_accept_key(key.as_bytes())
+        {
+            return Err(Error::WebsocketHandshake {
+                message: "wrong Sec-WebSocket-Accept in the response"
+                    .to_string(),
+            });
+        }
+        res.upgrade()
+            .await
+            .map_err(|source| Error::Reqwest { source })
     }
 
     pub async fn prelogin(
@@ -1867,5 +1992,137 @@ mod refresh_tests {
             refresh_error(502, "<html>bad gateway</html>"),
             Error::RequestFailed { status: 502 }
         ));
+    }
+}
+
+#[cfg(test)]
+mod compat_tests {
+    use super::*;
+    use std::io::{Read as _, Write as _};
+
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        #[serde(default, deserialize_with = "deserialize_login")]
+        login: Option<CipherLogin>,
+    }
+
+    #[test]
+    fn login_is_written_in_camel_case() {
+        let login = CipherLogin {
+            username: Some("u".to_string()),
+            password: Some("p".to_string()),
+            totp: None,
+            uris: Some(vec![CipherLoginUri {
+                uri: Some("https://example.invalid".to_string()),
+                match_type: None,
+            }]),
+            fido2_credentials: None,
+        };
+        let json = serde_json::to_value(&login).unwrap();
+        let keys: Vec<_> = json.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["password", "totp", "uris", "username"]);
+        let uri = &json["uris"][0];
+        assert!(uri.get("uri").is_some() && uri.get("match").is_some());
+    }
+
+    #[test]
+    fn login_with_both_cases_of_a_field_still_parses() {
+        // what nodewarden stores for a login written in PascalCase
+        let w: Wrapper = serde_json::from_str(
+            r#"{"login":{"Username":"old-u","Password":"p","Totp":null,
+                "Uris":[{"Uri":"old","Match":null}],"fido2Credentials":null,
+                "uris":[{"uri":"new","match":null}],"username":null}}"#,
+        )
+        .unwrap();
+        let login = w.login.unwrap();
+        assert_eq!(login.username.as_deref(), Some("old-u"));
+        assert_eq!(login.password.as_deref(), Some("p"));
+        let uris = login.uris.unwrap();
+        assert_eq!(uris.len(), 1);
+        assert_eq!(uris[0].uri.as_deref(), Some("new"));
+
+        let w: Wrapper = serde_json::from_str(r#"{"login":null}"#).unwrap();
+        assert!(w.login.is_none());
+        let w: Wrapper = serde_json::from_str("{}").unwrap();
+        assert!(w.login.is_none());
+    }
+
+    fn serve_once(
+        respond: impl FnOnce(&str) -> String + Send + 'static,
+    ) -> (String, std::thread::JoinHandle<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0; 4096];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            stream.write_all(respond(&request).as_bytes()).unwrap();
+            request
+        });
+        (format!("http://{address}/notifications"), server)
+    }
+
+    fn request_key(request: &str) -> String {
+        request
+            .lines()
+            .find_map(|l| {
+                l.to_ascii_lowercase()
+                    .starts_with("sec-websocket-key:")
+                    .then(|| l.split_once(':').unwrap().1.trim().to_string())
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn notifications_handshake_sends_token_in_header_and_query() {
+        let (url, server) = serve_once(|request| {
+            let accept =
+                tokio_tungstenite::tungstenite::handshake::derive_accept_key(
+                    request_key(request).as_bytes(),
+                );
+            format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n")
+        });
+        let client = Client::new("", "", "", None);
+        client
+            .notifications_websocket(&url, "fixture-token")
+            .await
+            .unwrap();
+        let request = server.join().unwrap();
+        assert!(request.starts_with(
+            "GET /notifications/hub?access_token=fixture-token HTTP/1.1"
+        ));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fixture-token\r\n"));
+    }
+
+    #[tokio::test]
+    async fn notifications_handshake_rejects_wrong_accept_key() {
+        let (url, server) = serve_once(|_| {
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: bogus\r\n\r\n".to_string()
+        });
+        let client = Client::new("", "", "", None);
+        let err = client
+            .notifications_websocket(&url, "fixture-token")
+            .await
+            .unwrap_err();
+        server.join().unwrap();
+        assert!(err.to_string().contains("Sec-WebSocket-Accept"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn notifications_handshake_reports_rejected_token() {
+        let (url, server) = serve_once(|_| {
+            "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n"
+                .to_string()
+        });
+        let client = Client::new("", "", "", None);
+        let err = client
+            .notifications_websocket(&url, "fixture-token")
+            .await
+            .unwrap_err();
+        server.join().unwrap();
+        assert!(err.to_string().contains("401"), "{err}");
     }
 }

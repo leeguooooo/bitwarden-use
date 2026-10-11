@@ -574,9 +574,16 @@ pub async fn sync(
     db.entries = entries;
     save_db(&db).await?;
 
-    if let Err(e) = subscribe_to_notifications(state.clone()).await {
-        eprintln!("failed to subscribe to notifications: {e}");
-    }
+    // the sync is done once the db is saved; subscribing to notifications
+    // happens in the background so a slow notifications server cannot hold
+    // up this reply or other commands
+    let notifications_state = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = subscribe_to_notifications(notifications_state).await
+        {
+            eprintln!("failed to subscribe to notifications: {e:#}");
+        }
+    });
 
     if let Some(sock) = sock {
         respond_ack(sock).await?;
@@ -902,36 +909,36 @@ async fn config_unlock_with_keychain() -> anyhow::Result<bool> {
     Ok(config.unlock_with_keychain)
 }
 
+const NOTIFICATIONS_CONNECT_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(10);
+
 pub async fn subscribe_to_notifications(
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
 ) -> anyhow::Result<()> {
-    if state.lock().await.notifications_handler.is_connected() {
+    let Some(guard) =
+        state.lock().await.notifications_handler.begin_connect()
+    else {
         return Ok(());
-    }
+    };
 
-    let config = rbw::config::Config::load_async()
+    let connection =
+        tokio::time::timeout(NOTIFICATIONS_CONNECT_TIMEOUT, async {
+            let db = load_db().await?;
+            let access_token =
+                db.access_token.context("Error getting access token")?;
+            guard.connect(&access_token).await
+        })
         .await
-        .context("Config is missing")?;
-    let email = config.email.clone().context("Config is missing email")?;
-    let db = rbw::db::Db::load_async(config.server_name().as_str(), &email)
-        .await?;
-    let access_token =
-        db.access_token.context("Error getting access token")?;
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "timed out after {}s",
+                NOTIFICATIONS_CONNECT_TIMEOUT.as_secs()
+            )
+        })??;
 
-    let websocket_url = format!(
-        "{}/hub?access_token={}",
-        config.notifications_url(),
-        access_token
-    )
-    .replace("https://", "wss://");
-
-    let mut state = state.lock().await;
-    state
-        .notifications_handler
-        .connect(websocket_url)
-        .await
-        .err()
-        .map_or_else(|| Ok(()), |err| Err(anyhow::anyhow!(err.to_string())))
+    state.lock().await.notifications_handler.install(connection);
+    drop(guard);
+    Ok(())
 }
 
 pub async fn get_ssh_public_keys(

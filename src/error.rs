@@ -206,6 +206,9 @@ pub enum Error {
     #[error("error making api request")]
     Reqwest { source: reqwest::Error },
 
+    #[error("notifications websocket handshake failed: {message}")]
+    WebsocketHandshake { message: String },
+
     #[error("failed to decrypt")]
     Rsa { source: rsa::errors::Error },
 

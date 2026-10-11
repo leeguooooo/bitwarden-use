@@ -318,6 +318,15 @@ async fn exchange_refresh_token_async(refresh_token: &str) -> Result<String> {
     client.exchange_refresh_token_async(refresh_token).await
 }
 
+pub async fn notifications_websocket(
+    access_token: &str,
+) -> Result<reqwest::Upgraded> {
+    let (client, config) = api_client_async().await?;
+    client
+        .notifications_websocket(&config.notifications_url(), access_token)
+        .await
+}
+
 fn api_client() -> Result<(crate::api::Client, crate::config::Config)> {
     let config = crate::config::Config::load()?;
     let client = crate::api::Client::new(
