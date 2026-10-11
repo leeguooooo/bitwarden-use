@@ -1,5 +1,6 @@
 # Unreleased
 
+- `import <file.csv>`: add the logins from an Apple Passwords / Safari, Google Password Manager / Chrome or 1Password CSV export, recognized from the header row. Name, username, password, website, notes and the `otpauth://` setup are kept; logins already in the vault with the same name and username are skipped, so running it again only adds what is missing. Lists the names it will add (never passwords) and asks first; `--dry-run`, `--yes` and `--folder` work as for `add`.
 - Fix: `sync` (and every command behind it) hung when the notifications server accepted the connection but never finished the websocket handshake, e.g. NodeWarden reached directly while only a proxy works. `sync` now replies once the vault is saved; notifications connect in the background with a 10 s timeout, through `http_proxy` / `https_proxy` / `NO_PROXY` and the client certificate like every other request, and send the access token as an `Authorization` header as well (NodeWarden ignores the query parameter).
 - Fix: on NodeWarden, logins created with `bwu add --uri` broke every later sync with ``duplicate field `Uris` ``. Logins are now written in camelCase like the official clients, and logins already stored with both spellings sync again.
 

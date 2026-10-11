@@ -28,7 +28,7 @@ const NAME: &[&str] = &["title", "name"];
 const URI: &[&str] = &["url", "website", "login_uri"];
 const USERNAME: &[&str] = &["username", "login_username"];
 const PASSWORD: &[&str] = &["password", "login_password"];
-const NOTES: &[&str] = &["notes", "note", "extra"];
+const NOTES: &[&str] = &["notes", "note", "notesplain", "extra"];
 const TOTP: &[&str] = &["otpauth", "totp", "login_totp"];
 
 pub fn parse_csv(data: &[u8]) -> anyhow::Result<ParsedCsv> {

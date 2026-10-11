@@ -95,6 +95,9 @@ export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/rbw/ssh-agent-socket"   # rbw-<profile> i
   A refused or timed-out prompt is the user's answer.
 - Secrets meant for agents live in the allowed folder (for leo: `memory`). Add new ones there with
   `bwu add <name> <user> --folder memory` (password on stdin) instead of pasting them into notes.
+- Moving the user's passwords over from Apple Passwords, Google or 1Password: they export a CSV,
+  then `bwu import FILE --dry-run`, show them the list, and `bwu import FILE --yes` once they agree.
+  Remind them to delete the CSV afterwards; it holds every password in plain text.
 - Every reveal is appended to `~/Library/Logs/bitwarden-use/reveal.log` (no values). Mention it if
   the user asks what was accessed.
 - `fido2 get` prints metadata only; `--reveal` for the private key (always confirmed). Prefer
