@@ -207,6 +207,27 @@ enum Opt {
     },
 
     #[command(
+        about = "Import logins from a password manager's CSV export",
+        long_about = "Import logins from a password manager's CSV export\n\n\
+            Reads the CSV that Apple Passwords (macOS Passwords app or \
+            Safari), Google Password Manager (Chrome) or 1Password 8 \
+            exports; the format is recognized from the header row. Logins \
+            already in the vault with the same name and username are \
+            skipped, so an import can be run again safely. Shows the names \
+            to be added and asks before writing; --dry-run only shows them. \
+            Delete the exported file afterwards: it holds every password in \
+            plain text."
+    )]
+    Import {
+        #[arg(help = "CSV file to import, or - for stdin")]
+        file: std::path::PathBuf,
+        #[arg(long, help = "Folder for the imported entries")]
+        folder: Option<String>,
+        #[command(flatten)]
+        write: commands::WriteOptions,
+    },
+
+    #[command(
         about = "Generate a new password",
         long_about = "Generate a new password\n\n\
             If given a password entry name, also save the generated \
@@ -389,6 +410,7 @@ impl Opt {
             Self::Search { .. } => "search".to_string(),
             Self::Code { .. } => "code".to_string(),
             Self::Add { .. } => "add".to_string(),
+            Self::Import { .. } => "import".to_string(),
             Self::Generate { .. } => "generate".to_string(),
             Self::Edit { .. } => "edit".to_string(),
             Self::Set { .. } => "set".to_string(),
@@ -645,6 +667,11 @@ fn main() {
             folder.as_deref(),
             &write,
         ),
+        Opt::Import {
+            file,
+            folder,
+            write,
+        } => commands::import(&file, folder.as_deref(), &write),
         Opt::Generate {
             len,
             name,

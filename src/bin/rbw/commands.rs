@@ -1,6 +1,8 @@
 mod read;
 pub use read::domain_login;
+mod import;
 mod write;
+pub use import::import;
 use std::io::Write as _;
 pub use write::{edit, set, SetFields, WriteOptions};
 
@@ -2013,6 +2015,40 @@ pub fn code(
     Ok(())
 }
 
+/// The id of the folder with this name, creating it if there is none.
+fn resolve_folder(
+    db: &mut rbw::db::Db,
+    access_token: &mut String,
+    refresh_token: &str,
+    folder_name: &str,
+) -> anyhow::Result<String> {
+    let (new_access_token, folders) =
+        rbw::actions::list_folders(access_token, refresh_token)?;
+    if let Some(new_access_token) = new_access_token {
+        access_token.clone_from(&new_access_token);
+        db.access_token = Some(new_access_token);
+        save_db(db)?;
+    }
+
+    for (id, name) in folders {
+        if crate::actions::decrypt(&name, None, None)? == folder_name {
+            return Ok(id);
+        }
+    }
+
+    let (new_access_token, id) = rbw::actions::create_folder(
+        access_token,
+        refresh_token,
+        &crate::actions::encrypt(folder_name, None)?,
+    )?;
+    if let Some(new_access_token) = new_access_token {
+        access_token.clone_from(&new_access_token);
+        db.access_token = Some(new_access_token);
+        save_db(db)?;
+    }
+    Ok(id)
+}
+
 pub fn add(
     name: &str,
     username: Option<&str>,
@@ -2027,7 +2063,8 @@ pub fn add(
     // unwrap is safe here because the call to unlock above is guaranteed to
     // populate these or error
     let mut access_token = db.access_token.as_ref().unwrap().clone();
-    let refresh_token = db.refresh_token.as_ref().unwrap();
+    let refresh_token = db.refresh_token.clone().unwrap();
+    let refresh_token = &refresh_token;
 
     let name = crate::actions::encrypt(name, None)?;
 
@@ -2067,43 +2104,11 @@ pub fn add(
         })
         .collect::<anyhow::Result<_>>()?;
 
-    let mut folder_id = None;
-    if let Some(folder_name) = folder {
-        let (new_access_token, folders) =
-            rbw::actions::list_folders(&access_token, refresh_token)?;
-        if let Some(new_access_token) = new_access_token {
-            access_token.clone_from(&new_access_token);
-            db.access_token = Some(new_access_token);
-            save_db(&db)?;
-        }
-
-        let folders: Vec<(String, String)> = folders
-            .iter()
-            .cloned()
-            .map(|(id, name)| {
-                Ok((id, crate::actions::decrypt(&name, None, None)?))
-            })
-            .collect::<anyhow::Result<_>>()?;
-
-        for (id, name) in folders {
-            if name == folder_name {
-                folder_id = Some(id);
-            }
-        }
-        if folder_id.is_none() {
-            let (new_access_token, id) = rbw::actions::create_folder(
-                &access_token,
-                refresh_token,
-                &crate::actions::encrypt(folder_name, None)?,
-            )?;
-            if let Some(new_access_token) = new_access_token {
-                access_token.clone_from(&new_access_token);
-                db.access_token = Some(new_access_token);
-                save_db(&db)?;
-            }
-            folder_id = Some(id);
-        }
-    }
+    let folder_id = folder
+        .map(|folder| {
+            resolve_folder(&mut db, &mut access_token, refresh_token, folder)
+        })
+        .transpose()?;
 
     if let (Some(access_token), ()) = rbw::actions::add(
         &access_token,

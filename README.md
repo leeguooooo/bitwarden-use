@@ -229,6 +229,22 @@ each device with the server. This prompts for your personal API key, which you
 can find using the instructions
 [here](https://bitwarden.com/help/article/personal-api-key/).
 
+### Importing from another password manager
+
+`bitwarden-use import <file.csv>` adds the logins from a CSV exported by Apple
+Passwords (the macOS Passwords app or Safari: File → Export All Passwords),
+Google Password Manager (passwords.google.com or Chrome: Settings → Export
+passwords) or 1Password 8 (File → Export, CSV). The format is recognized from
+the header row; name, username, password, website, notes and one-time-password
+setup are kept. Logins already in the vault with the same name and username are
+skipped, so running it again only adds what is missing.
+
+```sh
+bwu import ~/Downloads/Passwords.csv --dry-run     # list what would be added
+bwu import ~/Downloads/Passwords.csv --folder imported --yes
+rm ~/Downloads/Passwords.csv                       # the export is plain text
+```
+
 ### Logging in to websites
 
 [chrome-use](https://github.com/leeguooooo/chrome-use) 1.5.155+ logs in with

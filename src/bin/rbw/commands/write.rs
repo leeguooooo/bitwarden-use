@@ -40,6 +40,12 @@ impl WriteOptions {
                 if *after { "[set]" } else { "[empty]" }
             );
         }
+        self.approve()
+    }
+
+    /// Ask before writing whatever was just previewed: never with
+    /// --dry-run, always with --yes, otherwise on the terminal.
+    pub fn approve(&self) -> anyhow::Result<bool> {
         if self.dry_run {
             return Ok(false);
         }
