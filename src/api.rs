@@ -2065,13 +2065,184 @@ mod patch_tests {
         check_patch_transport(true);
     }
 
+    fn token(subject: &str) -> String {
+        use base64::Engine as _;
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(
+                serde_json::json!({"sub": subject, "exp": 0}).to_string(),
+            );
+        format!("header.{payload}.signature")
+    }
+
+    #[test]
+    fn create_transport_sets_encrypted_for_from_each_token() {
+        for subject in ["user-one", "user-two"] {
+            check_create_transport(subject, false);
+        }
+    }
+
+    #[test]
+    fn native_create_transport_sets_encrypted_for_from_each_token() {
+        for subject in ["user-one", "user-two"] {
+            check_create_transport(subject, true);
+        }
+    }
+
+    #[test]
+    fn attachment_transport_leaves_body_unchanged() {
+        check_create_transport("fixture-token", false);
+    }
+
+    #[test]
+    fn malformed_token_rejects_writes_before_network() {
+        let client = Client::new("http://127.0.0.1:1", "", "", None);
+        let body = serde_json::json!({"name":"encrypted-name"});
+        for result in [
+            client.add(
+                "private-token-sentinel",
+                "name",
+                &crate::db::EntryData::SecureNote,
+                None,
+                None,
+            ),
+            client.patch_cipher(
+                "private-token-sentinel",
+                "fixture",
+                &crate::mutation::Patch::default(),
+            ),
+            client
+                .cipher_request(
+                    "private-token-sentinel",
+                    reqwest::Method::POST,
+                    "/ciphers",
+                    Some(&body),
+                )
+                .map(|_| ()),
+        ] {
+            let error = result.unwrap_err();
+            assert!(matches!(error, Error::UnsafeWrite { .. }));
+            assert!(error.to_string().contains("bwu login --force"));
+            assert!(!format!("{error:?} {error}")
+                .contains("private-token-sentinel"));
+        }
+    }
+
+    fn check_create_transport(subject: &str, native: bool) {
+        let attachment = subject == "fixture-token";
+        let token = if attachment {
+            subject.into()
+        } else {
+            token(subject)
+        };
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = if attachment {
+            serde_json::json!({"fileName":"encrypted-name", "key":"encrypted-key", "fileSize":42})
+        } else {
+            serde_json::json!({"name":"encrypted-name", "organizationId":"org", "encryptedFor":"stale", "encryptedByKeyId":"key-id"})
+        };
+        let borrowed_body = body.clone();
+        let original = body.clone();
+        let expected_token = token.clone();
+        let subject = subject.to_string();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .unwrap();
+            let mut reader =
+                std::io::BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let path = if attachment {
+                "/ciphers/fixture/attachment/v2"
+            } else {
+                "/ciphers"
+            };
+            assert!(line.starts_with(&format!("POST {path} ")));
+            let mut len = 0;
+            let mut authorization = String::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) =
+                    line.to_ascii_lowercase().strip_prefix("content-length:")
+                {
+                    len = value.trim().parse::<usize>().unwrap();
+                }
+                if line.to_ascii_lowercase().starts_with("authorization:") {
+                    authorization = line.trim().to_string();
+                }
+            }
+            assert_eq!(
+                authorization,
+                format!("authorization: Bearer {expected_token}")
+            );
+            let mut bytes = vec![0; len];
+            reader.read_exact(&mut bytes).unwrap();
+            let value: serde_json::Value =
+                serde_json::from_slice(&bytes).unwrap();
+            if attachment {
+                assert_eq!(value, original);
+                assert!(value.get("encryptedFor").is_none());
+            } else {
+                assert_eq!(value["name"], "encrypted-name");
+                assert_eq!(value["encryptedFor"], subject);
+                if native {
+                    assert_eq!(value["organizationId"], "org");
+                    assert_eq!(value["encryptedByKeyId"], "key-id");
+                } else {
+                    assert_eq!(value["type"], 2);
+                    assert_eq!(value["notes"], "encrypted-notes");
+                    assert_eq!(value["folderId"], "folder");
+                }
+            }
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}").unwrap();
+        });
+        let client = Client::new(&format!("http://{address}"), "", "", None);
+        let result = if native || attachment {
+            client
+                .cipher_request(
+                    &token,
+                    reqwest::Method::POST,
+                    if attachment {
+                        "/ciphers/fixture/attachment/v2"
+                    } else {
+                        "/ciphers"
+                    },
+                    Some(&body),
+                )
+                .map(|_| ())
+        } else {
+            client.add(
+                &token,
+                "encrypted-name",
+                &crate::db::EntryData::SecureNote,
+                Some("encrypted-notes"),
+                Some("folder"),
+            )
+        };
+        let server_result = server.join();
+        assert_eq!(body, borrowed_body);
+        server_result.unwrap();
+        result.unwrap();
+    }
+
     fn check_patch_transport(move_folder: bool) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
-            let original = serde_json::json!({"id":"fixture", "folderId":"old-folder", "revisionDate":"2026-09-06T00:00:00Z", "favorite":true,
+            let mut original = serde_json::json!({"id":"fixture", "folderId":"old-folder", "revisionDate":"2026-09-06T00:00:00Z", "favorite":true,
                 "reprompt":1, "key":null, "login":{"password":"encrypted-old", "fido2Credentials":[{"keyValue":"encrypted-passkey"}]},
                 "attachments":[{"id":"attachment","fileName":"encrypted-name","key":"encrypted-key"}]});
+            original["encryptedByKeyId"] = serde_json::Value::Null;
+            original["serverMetadata"] = serde_json::json!({"unknown": true});
+            if move_folder {
+                original["encryptedFor"] = serde_json::json!("stale");
+            }
             for method in ["GET", "PUT"] {
                 let (mut stream, _) = listener.accept().unwrap();
                 stream
@@ -2125,6 +2296,12 @@ mod patch_tests {
                         value["login"]["fido2Credentials"],
                         original["login"]["fido2Credentials"]
                     );
+                    assert_eq!(value["encryptedFor"], "patch-user");
+                    assert_eq!(
+                        value["encryptedByKeyId"],
+                        serde_json::Value::Null
+                    );
+                    assert_eq!(value["serverMetadata"]["unknown"], true);
                     assert_eq!(value["favorite"], true);
                     assert_eq!(value["reprompt"], 1);
                     assert_eq!(
@@ -2160,7 +2337,7 @@ mod patch_tests {
             );
         }
         client
-            .patch_cipher("fixture-token", "fixture", &patch)
+            .patch_cipher(&token("patch-user"), "fixture", &patch)
             .unwrap();
         server.join().unwrap();
     }
