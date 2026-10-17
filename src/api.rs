@@ -895,8 +895,37 @@ struct SyncResPasswordHistory {
     password: Option<String>,
 }
 
+fn encrypted_for(access_token: &str) -> Result<String> {
+    use base64::Engine as _;
+
+    #[derive(serde::Deserialize)]
+    struct Claims {
+        sub: String,
+    }
+
+    let invalid = || Error::UnsafeWrite {
+        message: "access token lacks a usable subject; run bwu login --force"
+            .into(),
+    };
+    let parts: Vec<_> = access_token.split('.').collect();
+    if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
+        return Err(invalid());
+    }
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .map_err(|_| invalid())?;
+    let claims: Claims =
+        serde_json::from_slice(&payload).map_err(|_| invalid())?;
+    if claims.sub.trim().is_empty() {
+        return Err(invalid());
+    }
+    Ok(claims.sub)
+}
+
 #[derive(serde::Serialize, Debug)]
 struct CiphersPostReq {
+    #[serde(rename = "encryptedFor")]
+    encrypted_for: String,
     #[serde(rename = "type")]
     ty: u32, // XXX what are the valid types?
     #[serde(rename = "folderId")]
@@ -1397,6 +1426,7 @@ impl Client {
         folder_id: Option<&str>,
     ) -> Result<()> {
         let mut req = CiphersPostReq {
+            encrypted_for: encrypted_for(access_token)?,
             ty: 1,
             folder_id: folder_id.map(std::string::ToString::to_string),
             name: name.to_string(),
@@ -1548,6 +1578,22 @@ impl Client {
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> Result<serde_json::Value> {
+        let create_body = if method == reqwest::Method::POST
+            && path == "/ciphers"
+        {
+            let subject = encrypted_for(token)?;
+            let mut cipher = body
+                .cloned()
+                .filter(serde_json::Value::is_object)
+                .ok_or_else(|| Error::UnsafeWrite {
+                    message: "cipher creation requires an object body".into(),
+                })?;
+            cipher["encryptedFor"] = serde_json::Value::String(subject);
+            Some(cipher)
+        } else {
+            None
+        };
+        let body = create_body.as_ref().or(body);
         let client = self.transfer_client()?;
         let mut request = client
             .request(method, self.api_url(path))
@@ -1668,6 +1714,7 @@ impl Client {
         id: &str,
         patch: &crate::mutation::Patch,
     ) -> Result<()> {
+        let subject = encrypted_for(access_token)?;
         let mut builder = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(10));
@@ -1704,6 +1751,7 @@ impl Client {
             .json()
             .map_err(|source| Error::Reqwest { source })?;
         patch.apply(&mut cipher)?;
+        cipher["encryptedFor"] = serde_json::Value::String(subject);
         let response = client
             .put(endpoint)
             .bearer_auth(access_token)
@@ -2124,6 +2172,77 @@ mod patch_tests {
             assert!(error.to_string().contains("bwu login --force"));
             assert!(!format!("{error:?} {error}")
                 .contains("private-token-sentinel"));
+        }
+    }
+
+    #[test]
+    fn token_subject_rejects_malformed_claims_without_exposing_values() {
+        use base64::Engine as _;
+        let encode = |payload: &str| {
+            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(payload);
+            format!("header.{payload}.signature")
+        };
+        let mut tokens: Vec<String> = [
+            "",
+            "private-token-sentinel",
+            "one.two",
+            "one.two.three.four",
+            ".e30.signature",
+            "header..signature",
+            "header.e30.",
+            "header.!.signature",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        for payload in [
+            "private-claim-sentinel",
+            "{}",
+            r#"{"sub":null}"#,
+            r#"{"sub":42,"private":"private-claim-sentinel"}"#,
+            r#"{"sub":""}"#,
+            r#"{"sub":"  \t"}"#,
+        ] {
+            tokens.push(encode(payload));
+        }
+        for token in tokens {
+            let error = encrypted_for(&token).unwrap_err();
+            assert!(matches!(error, Error::UnsafeWrite { .. }));
+            assert!(error.to_string().contains("bwu login --force"));
+            let rendered = format!("{error:?} {error}");
+            assert!(!rendered.contains("private-token-sentinel"));
+            assert!(!rendered.contains("private-claim-sentinel"));
+            if !token.is_empty() {
+                assert!(!rendered.contains(&token));
+            }
+        }
+        assert_eq!(encrypted_for(&token("user-one")).unwrap(), "user-one");
+        assert_eq!(
+            encrypted_for(&token(" user-two ")).unwrap(),
+            " user-two "
+        );
+    }
+
+    #[test]
+    fn native_create_requires_an_object_body() {
+        let client = Client::new("http://127.0.0.1:1", "", "", None);
+        for body in [
+            None,
+            Some(serde_json::Value::Null),
+            Some(serde_json::json!([])),
+            Some(serde_json::json!("cipher")),
+        ] {
+            let error = client
+                .cipher_request(
+                    &token("user-one"),
+                    reqwest::Method::POST,
+                    "/ciphers",
+                    body.as_ref(),
+                )
+                .unwrap_err();
+            assert!(matches!(error, Error::UnsafeWrite { .. }));
+            assert!(error.to_string().contains("object body"));
         }
     }
 
@@ -2642,6 +2761,7 @@ mod native_transport_tests {
                 reader.read_exact(&mut body).unwrap();
                 let body: serde_json::Value =
                     serde_json::from_slice(&body).unwrap();
+                assert_eq!(body["encryptedFor"], "synthetic-user");
                 assert_eq!(body["type"], kind);
                 assert_eq!(body["login"], serde_json::Value::Null);
                 if kind == 2 {
@@ -2650,7 +2770,13 @@ mod native_transport_tests {
                 stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
             });
             Client::new(&format!("http://{address}"), "", "", None)
-                .add("synthetic-token", "encrypted-name", &data, None, None)
+                .add(
+                    "header.eyJzdWIiOiJzeW50aGV0aWMtdXNlciJ9.signature",
+                    "encrypted-name",
+                    &data,
+                    None,
+                    None,
+                )
                 .unwrap();
             server.join().unwrap();
         }
