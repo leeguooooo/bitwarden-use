@@ -92,3 +92,57 @@ impl Identity {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn argon2id_identity_matches_reference_vectors() {
+        // Generated independently with argon2-cffi 25.1.0 (libargon2 v19),
+        // hashlib PBKDF2 and HMAC-SHA256. Memory is 8 MiB, time cost is 2.
+        // Pin derived encryption/MAC keys and the login hash across upgrades.
+        let vectors = [
+            (
+                1,
+                "43a8bb12cac840a084fda7b7cf3ecc6f7e63ae7c5d2300357da336f57489da0b",
+                "9bb2ff277d2aeeb97e7016fcb7e905c87a672966e6e7d9f5814fc394893e4b0f",
+                "95189bdee0e8bfa8cb21552e57cae2e1b9389a559363a31ce25f64281cda5fb0",
+            ),
+            (
+                2,
+                "e8c938d76e87a7640c0124003cb5978bd3426702c00c9bcab149682e8f8388b5",
+                "4fe655b05b93f9b22ca2f645a839ce4dd8ae49c211d2d2979fe588908fa89679",
+                "a9512d728128d30711c06b959e35b055cddc55cadaae44810a107ce6068db2a5",
+            ),
+        ];
+        let mut password = crate::locked::Vec::new();
+        password.extend(b"compatibility-test-password".iter().copied());
+        let password = crate::locked::Password::new(password);
+        for (parallelism, enc, mac, hash) in vectors {
+            let identity = Identity::new(
+                "  Fixture@Example.Invalid  ",
+                &password,
+                crate::api::KdfType::Argon2id,
+                2,
+                Some(8),
+                Some(parallelism),
+            )
+            .unwrap();
+            assert_eq!(identity.email, "fixture@example.invalid");
+            for (actual, expected) in [
+                (identity.keys.enc_key(), enc),
+                (identity.keys.mac_key(), mac),
+                (identity.master_password_hash.hash(), hash),
+            ] {
+                let expected: Vec<u8> = (0..expected.len())
+                    .step_by(2)
+                    .map(|i| {
+                        u8::from_str_radix(&expected[i..i + 2], 16).unwrap()
+                    })
+                    .collect();
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+}
