@@ -187,8 +187,11 @@ enum Opt {
             This command will open a text editor to enter \
             the password and notes. The editor to use is determined \
             by the value of the $VISUAL or $EDITOR environment variables.
-            The first line will be saved as the password and the \
-            remainder will be saved as a note."
+            In the editor, the first line is the password and the \
+            remainder is a note. Piped stdin accepts one password line \
+            with an optional terminal LF or CRLF; multiline input and \
+            private-key blocks are rejected before unlocking. Use \
+            `bwu item put` for native SSH-key or secure-note JSON items."
     )]
     Add {
         #[arg(help = "Name of the password entry")]

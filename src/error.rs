@@ -50,6 +50,14 @@ pub enum Error {
     EmptyStdinEdit,
 
     #[error(
+        "refusing multiline password input or a private-key block on stdin; nothing was written. \
+         `add` accepts a single password line (one terminal LF or CRLF is allowed). \
+         Use `bwu item put` for a native SSH-key or secure-note JSON item. \
+         Password-plus-notes editing remains available through the interactive editor."
+    )]
+    MultilinePasswordStdin,
+
+    #[error(
         "failed to run editor {}: {err}",
         .editor.to_string_lossy(),
     )]

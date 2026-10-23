@@ -2065,6 +2065,9 @@ pub fn add(
     options: &WriteOptions,
 ) -> anyhow::Result<()> {
     let input = rbw::edit::read_stdin(options.allow_empty)?;
+    if let Some(contents) = &input {
+        rbw::edit::validate_password_stdin(contents)?;
+    }
     unlock_online()?;
 
     let mut db = load_db()?;

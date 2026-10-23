@@ -27,6 +27,12 @@ profile's attachment directory. Changed files retain their earlier uploaded vers
 Missing files stop the operation before any write. The manifest is saved only after
 all readback checks pass. No background schedule is installed.
 
+`bwu add` accepts a single password line on piped stdin, with one optional terminal
+LF or CRLF. Multiline input and private-key blocks are rejected before unlocking or
+making a vault request, so a key cannot silently become a one-line password.
+Use `bwu item put` with native SSH-key or secure-note JSON for multiline material.
+The interactive editor still supports a first-line password followed by notes.
+
 For native writes, send JSON via stdin (type 2 = secure note, 3 = card, 4 = identity, 5 = SSH key):
 
 ```sh

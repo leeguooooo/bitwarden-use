@@ -1,3 +1,7 @@
+# 0.12.2
+
+- Reject multiline piped input and private-key blocks in `add` before unlocking or making a vault request. Accept a single terminal LF or CRLF for ordinary passwords, keep interactive password-plus-notes editing unchanged, and point callers to native SSH-key or secure-note JSON items.
+
 # 0.12.1
 
 - Find profile-use 0.4+ in registered plugin installations as well as standalone skill directories. Skip older copies without the sync helper and report the required version explicitly.
