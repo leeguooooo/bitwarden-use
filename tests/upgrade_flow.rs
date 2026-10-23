@@ -5,7 +5,12 @@
 //! not depend on reaching the GitHub API.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+
+// A concurrent fork can inherit a writable copy destination until exec. On
+// Linux that transient writer makes another test's exec fail with ETXTBSY.
+// Keep executable copies and process creation mutually exclusive.
+static EXECUTABLE_SETUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -21,11 +26,14 @@ fn fixture(with_agent: bool, installer_body: &str) -> Fixture {
     let bin = root.join("bin");
     std::fs::create_dir_all(home.join("tmp")).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::copy(
-        env!("CARGO_BIN_EXE_bitwarden-use"),
-        bin.join("bitwarden-use"),
-    )
-    .unwrap();
+    {
+        let _guard = EXECUTABLE_SETUP.lock().unwrap();
+        std::fs::copy(
+            env!("CARGO_BIN_EXE_bitwarden-use"),
+            bin.join("bitwarden-use"),
+        )
+        .unwrap();
+    }
     if with_agent {
         std::fs::write(bin.join("bitwarden-use-agent"), "agent").unwrap();
     }
@@ -44,22 +52,29 @@ fn fixture(with_agent: bool, installer_body: &str) -> Fixture {
 }
 
 fn run(f: &Fixture, args: &[&str]) -> Output {
-    Command::new(f.bin.join("bitwarden-use"))
-        .arg("upgrade")
-        .args(args)
-        .env("HOME", &f.home)
-        .env("XDG_CACHE_HOME", f.home.join(".cache"))
-        // Never see the real agent: own profile, runtime and temp dirs.
-        .env_remove("XDG_RUNTIME_DIR")
-        .env("RBW_PROFILE", "upgrade-flow-test")
-        .env("TMPDIR", f.home.join("tmp"))
-        .env_remove("CARGO_HOME")
-        .env(
-            "BITWARDEN_USE_INSTALLER_URL",
-            format!("file://{}", f.installer.display()),
-        )
-        .output()
-        .unwrap()
+    let child = {
+        let _guard = EXECUTABLE_SETUP.lock().unwrap();
+        Command::new(f.bin.join("bitwarden-use"))
+            .arg("upgrade")
+            .args(args)
+            .env("HOME", &f.home)
+            .env("XDG_CACHE_HOME", f.home.join(".cache"))
+            // Never see the real agent: own profile, runtime and temp dirs.
+            .env_remove("XDG_RUNTIME_DIR")
+            .env("RBW_PROFILE", "upgrade-flow-test")
+            .env("TMPDIR", f.home.join("tmp"))
+            .env_remove("CARGO_HOME")
+            .env(
+                "BITWARDEN_USE_INSTALLER_URL",
+                format!("file://{}", f.installer.display()),
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    child.wait_with_output().unwrap()
 }
 
 fn text(b: &[u8]) -> String {
