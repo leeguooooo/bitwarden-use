@@ -190,13 +190,32 @@ With chrome-use 1.5.155+, prefer `chrome-use auth login --bwu` on the login page
 fills it through `run`. Doing it by hand:
 
 1. `bwu login --domain <url> --list` — candidates with `uses` / `last_used`. One candidate: use
-   it. Several: take the first only if the user's request doesn't point to another; otherwise ask.
+   it. Several: select the UUID identified by the user's request; otherwise ask.
+   Do not silently pick the most recently used account.
 2. `bwu login --domain <url> --name <uuid>` — masked item with `autotype`: the site's login
    steps (`username`, `password`, `totp`, `tab`, `enter`, `delay`, `custom:<name>`) from the
    item's `_autotype` field, or null for the plain username → password → submit.
 3. `bwu run --env U=bw:<uuid>#username --env P=bw:<uuid>#password -- chrome-use …` — one
    Touch ID prompt for the item. Fetch `#totp` in a separate `run` when the code field appears,
    so the code is fresh.
+
+With a chrome-use build whose `auth --help` lists `--totp`, default login waits
+for a code field before a second `bwu run` fetches TOTP from the same selected
+item. Each phase is audited and may require authorization. On an existing
+challenge use `chrome-use auth login --bwu --totp --item <uuid>`: only TOTP is
+read, and username/password and `_autotype` are skipped. It cannot be combined
+with `--passkey` or `--no-submit`. A rejected code is not retried automatically;
+inspect the page before another attempt. Pending human verification must not be
+reported as signed in or navigated away from.
+
+The login's authenticator field must contain its TOTP setup key or `otpauth://`
+URI. A stored password or a current six-digit code is insufficient. Have the
+user migrate the setup key through the vault UI; never request it in chat or
+put a real setup key in command arguments. Keep the original authenticator
+until the new setup has been checked. SMS/email codes and push approvals have
+separate sources; do not submit a vault TOTP for those challenges. Custom
+`_autotype` sequences still fetch all values before starting; use `--totp` on
+the code page if a long sequence used up the code's lifetime.
 
 Passkeys: `login --domain` reports `passkeys` (a count). With chrome-use 1.5.157+, `auth login --bwu`
 answers a passkey / security-key second factor with it, and `auth login --bwu --passkey` signs in

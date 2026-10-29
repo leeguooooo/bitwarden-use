@@ -342,8 +342,29 @@ your vault when `bwu` is installed:
 
 ```sh
 chrome-use open https://github.com/login
-chrome-use auth login --bwu              # account for the current page; Touch ID once
+chrome-use auth login --bwu              # account for the current page; vault authorization
 ```
+
+Newer chrome-use builds list `--totp` in `auth --help`. Their default password
+flow waits for a code field, then fetches a fresh TOTP in a second `bwu run`
+with the same item. This may ask for authorization again. Already at an
+authenticator challenge? Run:
+
+```sh
+chrome-use auth login --bwu --totp --item <uuid>
+```
+
+It reads only TOTP and skips the password and `_autotype`. Code fields may
+submit automatically, so `--totp` cannot be combined with `--no-submit` or
+`--passkey`. Rejected codes are not automatically retried. Custom `_autotype`
+sequences retain their existing timing and fetch all values before starting.
+
+The Bitwarden login's authenticator field must hold the setup key or
+`otpauth://` URI. Saving just a password or a current code is insufficient.
+Migrate the setup key through the vault UI, keep the original authenticator
+until verified, and do not paste it into chat or command arguments. SMS, email
+and push approval use their own sources. A pending verification step is not a
+completed login.
 
 Underneath it uses two commands any tool can call:
 
