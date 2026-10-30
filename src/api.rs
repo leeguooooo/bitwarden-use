@@ -992,28 +992,48 @@ impl Client {
         }
     }
 
-    async fn reqwest_client(&self) -> Result<reqwest::Client> {
-        let mut default_headers = axum::http::HeaderMap::new();
-        default_headers.insert(
+    /// Client identification for every request to the Bitwarden API. The
+    /// server refuses to edit items with passkeys (and other newer data) for
+    /// clients that do not report a recent enough version.
+    fn bitwarden_headers() -> reqwest::header::HeaderMap {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
             "Bitwarden-Client-Name",
-            axum::http::HeaderValue::from_static(BITWARDEN_CLIENT),
+            reqwest::header::HeaderValue::from_static(BITWARDEN_CLIENT),
         );
-        default_headers.insert(
+        headers.insert(
             "Bitwarden-Client-Version",
-            axum::http::HeaderValue::from_static(BITWARDEN_CLIENT_VERSION),
+            reqwest::header::HeaderValue::from_static(
+                BITWARDEN_CLIENT_VERSION,
+            ),
         );
-        default_headers.append(
+        headers.append(
             "Device-Type",
             // unwrap is safe here because DEVICE_TYPE is a number and digits
             // are valid ASCII
-            axum::http::HeaderValue::from_str(&DEVICE_TYPE.to_string())
+            reqwest::header::HeaderValue::from_str(&DEVICE_TYPE.to_string())
                 .unwrap(),
         );
-        let user_agent = format!(
-            "{}/{}",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        );
+        headers
+    }
+
+    fn user_agent() -> String {
+        format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Blocking client for Bitwarden API requests, identified like the async
+    /// one.
+    fn blocking_client() -> Result<reqwest::blocking::Client> {
+        reqwest::blocking::Client::builder()
+            .user_agent(Self::user_agent())
+            .default_headers(Self::bitwarden_headers())
+            .build()
+            .map_err(|source| Error::CreateReqwestClient { source })
+    }
+
+    async fn reqwest_client(&self) -> Result<reqwest::Client> {
+        let default_headers = Self::bitwarden_headers();
+        let user_agent = Self::user_agent();
         if let Some(client_cert_path) = self.client_cert_path.as_ref() {
             let mut buf = Vec::new();
             let mut f = tokio::fs::File::open(client_cert_path)
@@ -1528,7 +1548,7 @@ impl Client {
             }
             crate::db::EntryData::SshKey { .. } => unreachable!(),
         }
-        let client = reqwest::blocking::Client::new();
+        let client = Self::blocking_client()?;
         let res = client
             .post(self.api_url("/ciphers"))
             .header("Authorization", format!("Bearer {access_token}"))
@@ -1597,6 +1617,7 @@ impl Client {
         let client = self.transfer_client()?;
         let mut request = client
             .request(method, self.api_url(path))
+            .headers(Self::bitwarden_headers())
             .bearer_auth(token);
         if let Some(body) = body {
             request = request.json(body);
@@ -1638,6 +1659,7 @@ impl Client {
         let response = if created["fileUploadType"].as_u64() == Some(0) {
             // Use our configured API origin; never forward bearer tokens to an upload URL.
             client.post(self.api_url(&format!("/ciphers/{item}/attachment/{id}")))
+                .headers(Self::bitwarden_headers())
                 .bearer_auth(token)
                 .multipart(reqwest::blocking::multipart::Form::new().part("data", reqwest::blocking::multipart::Part::bytes(encrypted.to_vec()).file_name(filename.to_owned()).mime_str("application/octet-stream").map_err(|_| Error::UnsafeWrite { message: "invalid attachment content type".into() })?))
                 .send()
@@ -1716,6 +1738,8 @@ impl Client {
     ) -> Result<()> {
         let subject = encrypted_for(access_token)?;
         let mut builder = reqwest::blocking::Client::builder()
+            .user_agent(Self::user_agent())
+            .default_headers(Self::bitwarden_headers())
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(10));
         if let Some(path) = &self.client_cert_path {
@@ -1770,7 +1794,7 @@ impl Client {
     }
 
     pub fn remove(&self, access_token: &str, id: &str) -> Result<()> {
-        let client = reqwest::blocking::Client::new();
+        let client = Self::blocking_client()?;
         let res = client
             .delete(self.api_url(&format!("/ciphers/{id}")))
             .header("Authorization", format!("Bearer {access_token}"))
@@ -1791,7 +1815,7 @@ impl Client {
         &self,
         access_token: &str,
     ) -> Result<Vec<(String, String)>> {
-        let client = reqwest::blocking::Client::new();
+        let client = Self::blocking_client()?;
         let res = client
             .get(self.api_url("/folders"))
             .header("Authorization", format!("Bearer {access_token}"))
@@ -1823,7 +1847,7 @@ impl Client {
         let req = FoldersPostReq {
             name: name.to_string(),
         };
-        let client = reqwest::blocking::Client::new();
+        let client = Self::blocking_client()?;
         let res = client
             .post(self.api_url("/folders"))
             .header("Authorization", format!("Bearer {access_token}"))
@@ -1853,7 +1877,7 @@ impl Client {
             client_id: "cli".to_string(),
             refresh_token: refresh_token.to_string(),
         };
-        let client = reqwest::blocking::Client::new();
+        let client = Self::blocking_client()?;
         let res = client
             .post(self.identity_url("/connect/token"))
             .form(&connect_req)
@@ -2359,6 +2383,9 @@ mod patch_tests {
                 "attachments":[{"id":"attachment","fileName":"encrypted-name","key":"encrypted-key"}]});
             original["encryptedByKeyId"] = serde_json::Value::Null;
             original["serverMetadata"] = serde_json::json!({"unknown": true});
+            // The server's copy of the typed fields; it wins over them on PUT.
+            original["data"] =
+                serde_json::json!({"password":"encrypted-old"});
             if move_folder {
                 original["encryptedFor"] = serde_json::json!("stale");
             }
@@ -2377,19 +2404,29 @@ mod patch_tests {
                     line.starts_with(&format!("{method} /ciphers/fixture "))
                 );
                 let mut len = 0;
+                let mut client_version = None;
                 loop {
                     line.clear();
                     reader.read_line(&mut line).unwrap();
                     if line == "\r\n" {
                         break;
                     }
-                    if let Some(value) = line
-                        .to_ascii_lowercase()
-                        .strip_prefix("content-length:")
+                    let lower = line.to_ascii_lowercase();
+                    if let Some(value) = lower.strip_prefix("content-length:")
                     {
                         len = value.trim().parse::<usize>().unwrap();
                     }
+                    if let Some(value) =
+                        lower.strip_prefix("bitwarden-client-version:")
+                    {
+                        client_version = Some(value.trim().to_owned());
+                    }
                 }
+                // Without it the server refuses to edit items with passkeys.
+                assert_eq!(
+                    client_version.as_deref(),
+                    Some(BITWARDEN_CLIENT_VERSION)
+                );
                 let mut body = vec![0; len];
                 reader.read_exact(&mut body).unwrap();
                 if method == "PUT" {
@@ -2421,6 +2458,7 @@ mod patch_tests {
                         serde_json::Value::Null
                     );
                     assert_eq!(value["serverMetadata"]["unknown"], true);
+                    assert!(value.get("data").is_none());
                     assert_eq!(value["favorite"], true);
                     assert_eq!(value["reprompt"], 1);
                     assert_eq!(

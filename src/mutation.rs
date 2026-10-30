@@ -112,6 +112,12 @@ impl Patch {
                 "blob-encrypted cipher is not supported by this client",
             ));
         }
+        // GET returns `data`, a server-side copy of the item's typed fields.
+        // The server takes it over the typed fields when a request carries
+        // it, so sending it back unchanged would silently drop the edit.
+        if let Some(object) = updated.as_object_mut() {
+            object.remove("data");
+        }
         updated["lastKnownRevisionDate"] = revision;
         *cipher = updated;
         Ok(())
