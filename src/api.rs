@@ -1401,8 +1401,6 @@ impl Client {
         let res = client
             .get(self.api_url("/sync"))
             .header("Authorization", format!("Bearer {access_token}"))
-            // This is necessary for vaultwarden to include the ssh keys in the response
-            .header("Bitwarden-Client-Version", "2024.12.0")
             .send()
             .await
             .map_err(|source| Error::Reqwest { source })?;
@@ -2123,6 +2121,21 @@ fn classify_login_error(error_res: &ConnectErrorRes, code: u16) -> Error {
 }
 
 #[cfg(test)]
+fn assert_api_identification(
+    headers: &std::collections::HashMap<String, String>,
+) {
+    assert_eq!(
+        headers.get("bitwarden-client-name").map(String::as_str),
+        Some(BITWARDEN_CLIENT)
+    );
+    assert_eq!(
+        headers.get("bitwarden-client-version").map(String::as_str),
+        Some(BITWARDEN_CLIENT_VERSION)
+    );
+    assert_eq!(headers.get("device-type"), Some(&DEVICE_TYPE.to_string()));
+}
+
+#[cfg(test)]
 mod patch_tests {
     use super::*;
     use std::io::{BufRead as _, Read as _, Write as _};
@@ -2305,11 +2318,18 @@ mod patch_tests {
             assert!(line.starts_with(&format!("POST {path} ")));
             let mut len = 0;
             let mut authorization = String::new();
+            let mut headers = std::collections::HashMap::new();
             loop {
                 line.clear();
                 reader.read_line(&mut line).unwrap();
                 if line == "\r\n" {
                     break;
+                }
+                if let Some((name, value)) = line.split_once(':') {
+                    headers.insert(
+                        name.to_ascii_lowercase(),
+                        value.trim().to_owned(),
+                    );
                 }
                 if let Some(value) =
                     line.to_ascii_lowercase().strip_prefix("content-length:")
@@ -2320,6 +2340,7 @@ mod patch_tests {
                     authorization = line.trim().to_string();
                 }
             }
+            assert_api_identification(&headers);
             assert_eq!(
                 authorization,
                 format!("authorization: Bearer {expected_token}")
@@ -2384,8 +2405,9 @@ mod patch_tests {
             original["encryptedByKeyId"] = serde_json::Value::Null;
             original["serverMetadata"] = serde_json::json!({"unknown": true});
             // The server's copy of the typed fields; it wins over them on PUT.
-            original["data"] =
-                serde_json::json!({"password":"encrypted-old"});
+            original["data"] = serde_json::Value::String(
+                serde_json::json!({"password":"encrypted-old"}).to_string(),
+            );
             if move_folder {
                 original["encryptedFor"] = serde_json::json!("stale");
             }
@@ -2404,7 +2426,7 @@ mod patch_tests {
                     line.starts_with(&format!("{method} /ciphers/fixture "))
                 );
                 let mut len = 0;
-                let mut client_version = None;
+                let mut headers = std::collections::HashMap::new();
                 loop {
                     line.clear();
                     reader.read_line(&mut line).unwrap();
@@ -2416,17 +2438,15 @@ mod patch_tests {
                     {
                         len = value.trim().parse::<usize>().unwrap();
                     }
-                    if let Some(value) =
-                        lower.strip_prefix("bitwarden-client-version:")
-                    {
-                        client_version = Some(value.trim().to_owned());
+                    if let Some((name, value)) = line.split_once(':') {
+                        headers.insert(
+                            name.to_ascii_lowercase(),
+                            value.trim().to_owned(),
+                        );
                     }
                 }
                 // Without it the server refuses to edit items with passkeys.
-                assert_eq!(
-                    client_version.as_deref(),
-                    Some(BITWARDEN_CLIENT_VERSION)
-                );
+                assert_api_identification(&headers);
                 let mut body = vec![0; len];
                 reader.read_exact(&mut body).unwrap();
                 if method == "PUT" {
@@ -2735,6 +2755,7 @@ mod native_transport_tests {
             .await
             .unwrap();
         let headers = server.join().unwrap();
+        assert_api_identification(&headers);
         let version: Vec<u32> = headers["bitwarden-client-version"]
             .split('.')
             .map(|part| part.parse().unwrap())
@@ -2822,6 +2843,15 @@ mod native_transport_tests {
 
     #[test]
     fn attachment_multipart_is_binary_and_preserves_every_byte() {
+        check_attachment_upload_transport(false);
+    }
+
+    #[test]
+    fn signed_blob_upload_has_no_vault_identification_or_authorization() {
+        check_attachment_upload_transport(true);
+    }
+
+    fn check_attachment_upload_transport(signed_blob: bool) {
         let encrypted = vec![0xff; 65];
         let expected = encrypted.clone();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2838,21 +2868,49 @@ mod native_transport_tests {
                 reader.read_line(&mut line).unwrap();
                 assert!(line.starts_with(if index == 0 {
                     "POST /ciphers/fixture/attachment/v2 "
+                } else if signed_blob {
+                    "PUT /signed-blob?sig=synthetic "
                 } else {
                     "POST /ciphers/fixture/attachment/fixture-attachment "
                 }));
                 let mut length = 0;
+                let mut headers = std::collections::HashMap::new();
                 loop {
                     line.clear();
                     reader.read_line(&mut line).unwrap();
                     if line == "\r\n" {
                         break;
                     }
+                    if let Some((name, value)) = line.split_once(':') {
+                        headers.insert(
+                            name.to_ascii_lowercase(),
+                            value.trim().to_owned(),
+                        );
+                    }
                     if let Some(value) = line
                         .to_ascii_lowercase()
                         .strip_prefix("content-length:")
                     {
                         length = value.trim().parse::<usize>().unwrap();
+                    }
+                }
+                if index == 0 || !signed_blob {
+                    assert_api_identification(&headers);
+                    assert_eq!(
+                        headers.get("authorization").map(String::as_str),
+                        Some("Bearer synthetic-token")
+                    );
+                } else {
+                    for name in [
+                        "authorization",
+                        "bitwarden-client-name",
+                        "bitwarden-client-version",
+                        "device-type",
+                    ] {
+                        assert!(
+                            !headers.contains_key(name),
+                            "signed blob received {name}"
+                        );
                     }
                 }
                 let mut body = vec![0; length];
@@ -2863,14 +2921,22 @@ mod native_transport_tests {
                             .unwrap()["fileSize"],
                         expected.len()
                     );
-                    r#"{"attachmentId":"fixture-attachment","fileUploadType":0}"#
+                    serde_json::json!({"attachmentId":"fixture-attachment","fileUploadType":if signed_blob {1} else {0},"url":format!("http://{address}/signed-blob?sig=synthetic")}).to_string()
+                } else if signed_blob {
+                    assert_eq!(body, expected);
+                    assert_eq!(
+                        headers["content-type"],
+                        "application/octet-stream"
+                    );
+                    assert_eq!(headers["x-ms-blob-type"], "BlockBlob");
+                    "{}".to_owned()
                 } else {
                     assert!(body
                         .windows(expected.len())
                         .any(|window| window == expected));
                     assert!(String::from_utf8_lossy(&body)
                         .contains("Content-Type: application/octet-stream"));
-                    "{}"
+                    "{}".to_owned()
                 };
                 write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
             }
