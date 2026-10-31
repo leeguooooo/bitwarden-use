@@ -84,7 +84,7 @@ serde_path_to_error = "0.1.20"
 serde_repr = "0.1.20"
 serde = { version = "1.0.228", features = ["derive"] }
 sha1 = "0.10.6"
-sha2 = "0.10.9"
+sha2 = "0.11.1"
 signature = "2.2.0"
 ssh-agent-lib = "0.5.1"
 tempfile = "3.24.0"
