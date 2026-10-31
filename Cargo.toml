@@ -60,7 +60,7 @@ log = "0.4.29"
 open = "5.3.3"
 pbkdf2 = "0.12.2"
 percent-encoding = "2.3.2"
-pkcs8 = "0.10.2"
+pkcs8 = "0.11.0"
 # TODO: necessary because some packages still depend on old rand
 rand_8 = { package = "rand", version = "0.8.5" }
 rand = "0.9.2"
