@@ -42,7 +42,10 @@ impl ssh_agent_lib::agent::Session for SshAgent {
             .map(|p| {
                 p.parse::<ssh_agent_lib::ssh_key::PublicKey>()
                     .map(|pk| ssh_agent_lib::proto::Identity {
-                        pubkey: pk.key_data().clone(),
+                        credential:
+                            ssh_agent_lib::proto::PublicCredential::Key(
+                                pk.key_data().clone(),
+                            ),
                         comment: String::new(),
                     })
                     .map_err(ssh_agent_lib::error::AgentError::other)
@@ -57,8 +60,18 @@ impl ssh_agent_lib::agent::Session for SshAgent {
         ssh_agent_lib::ssh_key::Signature,
         ssh_agent_lib::error::AgentError,
     > {
-        let pubkey =
-            ssh_agent_lib::ssh_key::PublicKey::new(request.pubkey, "");
+        // Only plain public keys are served. ssh-agent-lib 0.5 could not
+        // decode a certificate here at all, so keep refusing those instead
+        // of signing with the certificate's underlying key.
+        let key_data = match request.credential {
+            ssh_agent_lib::proto::PublicCredential::Key(key_data) => key_data,
+            ssh_agent_lib::proto::PublicCredential::Cert(_) => {
+                return Err(ssh_agent_lib::error::AgentError::Other(
+                    "Signing with a certificate is not supported".into(),
+                ));
+            }
+        };
+        let pubkey = ssh_agent_lib::ssh_key::PublicKey::new(key_data, "");
 
         let private_key =
             crate::actions::find_ssh_private_key(self.state.clone(), pubkey)
