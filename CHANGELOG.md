@@ -1,3 +1,8 @@
+# 0.12.4
+
+- Update ssh-agent-lib to 0.6 for the built-in SSH agent. Keys are still listed as plain public keys, and sign requests that name a certificate are still refused. Update tempfile, psl and arrayvec. No command or behaviour changes.
+- 内置 SSH agent 升级到 ssh-agent-lib 0.6：仍只列出普通公钥，指定证书的签名请求照旧拒绝。同时更新 tempfile、psl、arrayvec。命令和行为没有变化。
+
 # 0.12.3
 
 - Fix full cipher creation and updates on Vaultwarden 1.37.4 by including the current access token's user subject as `encryptedFor`. Preserve item metadata and attachment request bodies; reject unusable token subjects without exposing token contents.
