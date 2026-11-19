@@ -60,9 +60,10 @@ impl ssh_agent_lib::agent::Session for SshAgent {
         ssh_agent_lib::ssh_key::Signature,
         ssh_agent_lib::error::AgentError,
     > {
-        // Only plain public keys are served. ssh-agent-lib 0.5 could not
-        // decode a certificate here at all, so keep refusing those instead
-        // of signing with the certificate's underlying key.
+        // Only plain public keys are served. With ssh-agent-lib 0.5 a
+        // certificate arrived as an opaque key that matched no vault entry,
+        // so keep refusing those instead of signing with the certificate's
+        // underlying key.
         let key_data = match request.credential {
             ssh_agent_lib::proto::PublicCredential::Key(key_data) => key_data,
             ssh_agent_lib::proto::PublicCredential::Cert(_) => {
