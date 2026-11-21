@@ -58,7 +58,7 @@ is-terminal = "0.4.17"
 libc = "0.2.178"
 log = "0.4.29"
 open = "5.3.3"
-pbkdf2 = "0.12.2"
+pbkdf2 = "0.13.0"
 percent-encoding = "2.3.2"
 pkcs8 = "0.10.2"
 # TODO: necessary because some packages still depend on old rand
